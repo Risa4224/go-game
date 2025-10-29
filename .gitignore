@@ -1,6 +1,6 @@
 # Ignore executable files
 *.exe
-
+*.json
 
 # Ignore build directories
 build/
