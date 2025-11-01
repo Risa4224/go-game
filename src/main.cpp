@@ -5,8 +5,9 @@ using namespace std;
 
 int main(){
     Board b;
-    b.placePiece(0, 0, BLACK);
-    b.placePiece(1, 1, WHITE);
+    b.init();
+    cout << "Initial Board State:\n";
     b.printSelf();
+    cout << "Lets start the game!\n";
     return 0;
 }
