@@ -13,42 +13,29 @@ int main(){
     Game gameLogic(&gameBoard);
 
     cout << "Go Game Initialized. BLACK goes first." << endl;
-    gameLogic.placeStone(0, 0); 
-    gameLogic.placeStone(0, 1);
-    gameLogic.placeStone(1, 1);
-    gameLogic.placeStone(0, 2);
-    gameLogic.placeStone(1, 2);
-    gameLogic.printDebug();
-    gameLogic.placeStone(1, 0);
-    gameLogic.printDebug();
-    gameLogic.placeStone(0, 3);
-    gameLogic.printDebug();
-    gameLogic.placeStone(1, 3);
-    gameLogic.placeStone(0, 0);
-    gameLogic.printDebug();
-    // // Vòng lặp game
-    // int x, y;
-    // int pre = 0;
-    // while (true) {
-    //     PieceColor currentTurn = gameLogic.getTurn();
-    //     char playerChar = (currentTurn == BLACK) ? 'B' : 'W';
-    //     cout << "\n--- Turn: " << playerChar << " ---" << endl;
+    // Vòng lặp game
+    int x, y;
+    int pre = 0;
+    while (true) {
+        PieceColor currentTurn = gameLogic.getTurn();
+        char playerChar = (currentTurn == BLACK) ? 'B' : 'W';
+        cout << "\n--- Turn: " << playerChar << " ---" << endl;
         
-    //     gameLogic.printDebug(); // In trạng thái game và board
+        gameLogic.printDebug(); // In trạng thái game và board
 
-    //     cout << "Player " << playerChar << ", enter move (x y, or -1, -1 to pass turn): ";
-    //     if (!(cin >> x >> y)) break;
-    //     if(gameLogic.ended(x, y)) pre++;
-    //     else pre = 0;
-    //     if(pre == 2) break;
-    //     // GameLogic::placeStone xử lý toàn bộ: kiểm tra luật, đặt quân, xử lý nhóm, bắt quân, chuyển lượt
-    //     bool success = gameLogic.placeStone(x, y);
+        cout << "Player " << playerChar << ", enter move (x y, or -1, -1 to pass turn): ";
+        if (!(cin >> x >> y)) break;
+        if(gameLogic.ended(x, y)) pre++;
+        else pre = 0;
+        if(pre == 2) break;
+        // GameLogic::placeStone xử lý toàn bộ: kiểm tra luật, đặt quân, xử lý nhóm, bắt quân, chuyển lượt
+        bool success = gameLogic.placeStone(x, y);
 
-    //     if (!success) {
-    //         cout << "Invalid move. Try again." << endl;
-    //         // Không chuyển lượt, người chơi này phải thử lại.
-    //     }
-    // }
+        if (!success) {
+            cout << "Invalid move. Try again." << endl;
+            // Không chuyển lượt, người chơi này phải thử lại.
+        }
+    }
 
     return 0;
 }

@@ -1,6 +1,7 @@
 // group.cpp
 #include "group.h"
 #include <cmath> // Cần cho std::abs
+#include <fstream>
 
 using namespace std;
 

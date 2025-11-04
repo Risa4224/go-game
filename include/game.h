@@ -13,11 +13,10 @@ private:
     std::vector<PieceGroup> groups; // Dữ liệu logic game
     PieceColor oppositeColor(PieceColor input) const;
     void processGroups(int x, int y, PieceColor c);
-    void checkCaptures(int x, int y, PieceColor c);
-    void removeGroup(int x, int y);
+    int checkCaptures(int x, int y, PieceColor c);
+    void removeGroup(int x, int y, int &a);
     int findGroupIndex(int x, int y);
     int calcLiberties(int x);
-    int calcLiberties(int x, int y) const;
     bool valid(int x, int y) const;
 public:
     Game(Board* b); 

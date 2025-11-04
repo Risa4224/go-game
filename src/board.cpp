@@ -2,8 +2,11 @@
 #include <iostream>
 #include "board.h"
 #include "nonclass.h" // Cần nonclass.h
+#include <fstream>
+
 
 using namespace std;
+
 
 Board::Board() {
     for(int i = 0; i < 19; ++i) {
@@ -20,7 +23,6 @@ PieceColor Board::getPiece(int x, int y) const {
     return board[x][y];
 }
 
-// LOẠI BỎ: oppositeColor (Chuyển sang Game)
 
 // empties the location on the board
 void Board::removePiece(int x, int y) {
