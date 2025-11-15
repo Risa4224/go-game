@@ -10,6 +10,10 @@ using namespace std;
 
 Game::Game(Board* b) : board(b), turn(BLACK) {}
 
+Game::Game(const Game& other) : board(other.board), turn(other.turn), groups(other.groups){
+    this->board = new Board(*(other.board));
+}
+
 // Phương thức Logic Game (PRIVATE)
 PieceColor Game::oppositeColor(PieceColor input) const {
     if(input == BLACK) return WHITE;

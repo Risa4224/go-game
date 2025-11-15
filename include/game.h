@@ -20,6 +20,8 @@ private:
     bool valid(int x, int y) const;
 public:
     Game(Board* b); 
+    Game(const Game& other);
+    Game& operator=(const Game& other);
     PieceColor getTurn() const { return turn; }
     bool placeStone(int x, int y); 
     bool ended(int x, int y);
