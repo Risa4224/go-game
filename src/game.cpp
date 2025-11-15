@@ -6,7 +6,8 @@
 #include <fstream>
 
 
-using namespace std;
+
+using namespace std;    
 
 Game::Game(Board* b) : board(b), turn(BLACK) {}
 
@@ -261,3 +262,5 @@ void Game::printDebug() const {
     }
     cout << "--------------------" << endl;
 }
+
+

@@ -5,7 +5,6 @@
 #include "board.h"
 #include <vector>
 #include <iostream>
-
 class Game {
 private:
     Board* board;
@@ -26,7 +25,7 @@ public:
     bool placeStone(int x, int y); 
     bool ended(int x, int y);
     bool checkKO() const;
-    void printDebug() const; 
+    void printDebug() const;
 };
 
 #endif
