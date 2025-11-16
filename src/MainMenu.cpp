@@ -131,7 +131,7 @@ void MainMenu::Update(sf::Time deltaTime)
 }
 void MainMenu::Draw()
 {
-    m_context->m_window->clear();   
+    m_context->m_window->clear(sf::Color::Blue);   
     m_context->m_window->draw(m_gameTitle);
     m_context->m_window->draw(m_exitButton);
     m_context->m_window->draw(m_playButton);
