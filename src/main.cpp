@@ -1,7 +1,7 @@
 // main.cpp
 #include <iostream>
-#include "board.h"
-#include "game.h" // Cần include game.h
+// #include "board.h"
+// #include "game.h" // Cần include game.h
 #include "GameApp.h"
 
 using namespace std;
@@ -37,6 +37,9 @@ int main(){
     //         // Không chuyển lượt, người chơi này phải thử lại.
     //     }
     // }
+
+
+    //UI is down here
     GameApp game;
     game.Run();
     return 0;
