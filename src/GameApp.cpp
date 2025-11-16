@@ -28,8 +28,6 @@ void GameApp::Run()
         while(timeSinceLastFrame>TIME_PER_FRAME)
         {
             timeSinceLastFrame-=TIME_PER_FRAME;
-
-
         }
         
             m_context->m_states->ProcessStateChange();

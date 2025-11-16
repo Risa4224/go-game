@@ -2,16 +2,16 @@
 #include <SFML/Window/Event.hpp>
 MainMenu::MainMenu(std::shared_ptr<Context> &context)
     :m_context(context),
-    m_exitButton(m_context->m_assets->GetFont(MAIN_FONT),"Exit",40),
-    m_playButton(m_context->m_assets->GetFont(MAIN_FONT),"Play",40),
-    m_settingsButton(m_context->m_assets->GetFont(MAIN_FONT),"Settings",40),
     m_gameTitle(m_context->m_assets->GetFont(MAIN_FONT),"Go Game",60),
+    m_playButton(m_context->m_assets->GetFont(MAIN_FONT),"Play",40),
+    m_exitButton(m_context->m_assets->GetFont(MAIN_FONT),"Exit",40),
+    m_settingsButton(m_context->m_assets->GetFont(MAIN_FONT),"Settings",40),
     m_isPlayButtonSelected(true),
-    m_isExitButtonSelected(false),
     m_isPlayButtonPressed(false),
+    m_isExitButtonSelected(false),
     m_isExitButtonPressed(false),
-    m_isSettingButtonPressed(false),
-    m_isSettingButtonSelected(false)
+    m_isSettingButtonSelected(false),
+    m_isSettingButtonPressed(false)
 {
 }
 
@@ -23,23 +23,23 @@ void MainMenu::Init()
 {
     //title
     m_gameTitle.setOrigin(m_gameTitle.getLocalBounds().getCenter());
-    m_gameTitle.setPosition({m_context->m_window->getSize().x/2,m_context->m_window->getSize().y/2-100});
+    m_gameTitle.setPosition({static_cast<float>(m_context->m_window->getSize().x)/2,static_cast<float>(m_context->m_window->getSize().y)/2-100});
 
     //play button
 
     m_playButton.setOrigin(m_playButton.getLocalBounds().getCenter());
-    m_playButton.setPosition({m_context->m_window->getSize().x/2,m_context->m_window->getSize().y/2-20});
+    m_playButton.setPosition({static_cast<float>(m_context->m_window->getSize().x/2),static_cast<float>(m_context->m_window->getSize().y)/2-20});
 
     //setting button
 
 
     m_settingsButton.setOrigin(m_settingsButton.getLocalBounds().getCenter());
-    m_settingsButton.setPosition({m_context->m_window->getSize().x/2,m_context->m_window->getSize().y/2+60});
+    m_settingsButton.setPosition({static_cast<float>(m_context->m_window->getSize().x/2),static_cast<float>(m_context->m_window->getSize().y)/2+60});
 
     //exit button
 
     m_exitButton.setOrigin(m_exitButton.getLocalBounds().getCenter());
-    m_exitButton.setPosition({m_context->m_window->getSize().x/2,m_context->m_window->getSize().y/2+140});
+    m_exitButton.setPosition({static_cast<float>(m_context->m_window->getSize().x)/2,static_cast<float>(m_context->m_window->getSize().y)/2+140});
 
 }
 void MainMenu::ProcessInput()
