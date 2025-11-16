@@ -30,11 +30,11 @@ void GameApp::Run()
             timeSinceLastFrame-=TIME_PER_FRAME;
 
 
+        }
+        
             m_context->m_states->ProcessStateChange();
             m_context->m_states->getCurrent()->ProcessInput();
             m_context->m_states->getCurrent()->Update(TIME_PER_FRAME);
             m_context->m_states->getCurrent()->Draw();
-
-        }
     }
 }
