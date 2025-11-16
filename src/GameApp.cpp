@@ -4,7 +4,7 @@
 
 GameApp::GameApp() : m_context(std::make_shared<Context>())
 {
-    m_context->m_window->create(sf::VideoMode({640,640}),"Go Game",sf::Style::Close);
+    m_context->m_window->create(sf::VideoMode({800,600}),"Go Game",sf::Style::Close);
     m_context->m_assets->AddFont(MAIN_FONT,"assets/fonts/Roboto-VariableFont_wdth,wght.ttf");
     m_context->m_states->Add(std::make_unique<MainMenu>(m_context));
 }

@@ -3,7 +3,7 @@
 #include <memory>
 
 #include <SFML/Graphics/Text.hpp>
-
+#include <SFML/Graphics/RectangleShape.hpp>
 #include "State.hpp"
 #include "GameApp.h"
 

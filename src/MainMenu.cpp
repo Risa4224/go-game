@@ -1,4 +1,5 @@
 #include "MainMenu.hpp"
+#include "ModeSelection.hpp"
 #include <SFML/Window/Event.hpp>
 MainMenu::MainMenu(std::shared_ptr<Context> &context)
     :m_context(context),
@@ -40,7 +41,6 @@ void MainMenu::Init()
 
     m_exitButton.setOrigin(m_exitButton.getLocalBounds().getCenter());
     m_exitButton.setPosition({static_cast<float>(m_context->m_window->getSize().x)/2,static_cast<float>(m_context->m_window->getSize().y)/2+140});
-
 }
 void MainMenu::ProcessInput()
 {
@@ -119,6 +119,7 @@ void MainMenu::Update(sf::Time deltaTime)
     if(m_isPlayButtonPressed)
     {
         //Todo GO to Play State
+        m_context->m_states->Add(std::make_unique<ModeSelection>(m_context),true);
     }
     else if(m_isSettingButtonPressed)
     {
@@ -131,7 +132,7 @@ void MainMenu::Update(sf::Time deltaTime)
 }
 void MainMenu::Draw()
 {
-    m_context->m_window->clear(sf::Color::Blue);   
+    m_context->m_window->clear({210,164,80});   
     m_context->m_window->draw(m_gameTitle);
     m_context->m_window->draw(m_exitButton);
     m_context->m_window->draw(m_playButton);
