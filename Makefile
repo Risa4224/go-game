@@ -6,8 +6,8 @@ SRC_DIR   := src
 INC_DIR   := include
 LIB_DIR   := lib
 
-SFML_INC  := D:/SFML-3.0.0/include
-SFML_LIB  := D:/SFML-3.0.0/lib
+SFML_INC  := C:/SFML-3.0.0/include
+SFML_LIB  := C:/SFML-3.0.0/lib
 
 LIBRARIES := -lsfml-graphics -lsfml-window -lsfml-system
 EXECUTABLE := main

@@ -1,34 +1,39 @@
 #pragma once
 
 #include <memory>
-
-#include <SFML/Graphics/Text.hpp>
-#include <SFML/Graphics/RectangleShape.hpp>
 #include "State.hpp"
 #include "GameApp.h"
 
+#include <SFML/Graphics/Text.hpp>
+#include <SFML/Graphics/RectangleShape.hpp>
+
 class MainMenu : public Engine::State
- {
-private :
+{
+private:
     std::shared_ptr<Context> m_context;
+
     sf::Text m_gameTitle;
-    sf::Text m_playButton;
-    sf::Text m_exitButton;
-    sf::Text m_settingsButton;
+
+    sf::RectangleShape m_playButtonBox;
+    sf::RectangleShape m_settingsButtonBox;
+    sf::RectangleShape m_exitButtonBox;
+
+    sf::Text m_playButtonText;
+    sf::Text m_settingsButtonText;
+    sf::Text m_exitButtonText;
 
     bool m_isPlayButtonSelected;
-    bool m_isPlayButtonPressed;
-
+    bool m_isSettingsButtonSelected;
     bool m_isExitButtonSelected;
+
+    bool m_isPlayButtonPressed;
+    bool m_isSettingsButtonPressed;
     bool m_isExitButtonPressed;
-
-    bool m_isSettingButtonSelected;
-    bool m_isSettingButtonPressed;
-
 
 public:
     MainMenu(std::shared_ptr<Context>& context);
-    ~MainMenu();
+    ~MainMenu() override;
+
     void Init() override;
     void ProcessInput() override;
     void Update(sf::Time deltaTime) override;

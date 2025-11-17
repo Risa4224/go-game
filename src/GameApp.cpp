@@ -2,31 +2,45 @@
 #include "MainMenu.hpp"
 #include <SFML/Window.hpp>
 
-GameApp::GameApp() : m_context(std::make_shared<Context>())
+GameApp::GameApp()
+    : m_context(std::make_shared<Context>())
 {
-    m_context->m_window->create(sf::VideoMode({1000,800}),"Go Game",sf::Style::Close);
-    m_context->m_assets->AddFont(MAIN_FONT,"assets/fonts/Roboto-VariableFont_wdth,wght.ttf");
-    m_context->m_states->Add(std::make_unique<MainMenu>(m_context));
-}
-GameApp::~GameApp()
-{
+    m_context->m_window->create(
+        sf::VideoMode({1000u, 800u}),
+        "Go Game",
+        sf::Style::Close
+    );
 
+    m_context->m_assets->AddFont(MAIN_FONT, "assets/fonts/Roboto-VariableFont_wdth,wght.ttf");
+
+    // RẤT QUAN TRỌNG: push MainMenu lần đầu
+    m_context->m_states->Add(std::make_unique<MainMenu>(m_context), false);
 }
+
+GameApp::~GameApp() = default;
 
 void GameApp::Run()
 {
-
     sf::Clock clock;
-    sf::Time timeSinceLastFrame=sf::Time::Zero;
 
-
-
-    while(m_context->m_window->isOpen())
+    while (m_context->m_window->isOpen())
     {
-        timeSinceLastFrame+= clock.restart();
+        sf::Time dt = clock.restart();
+
+        // Áp dụng thay đổi state (push/pop/replace)
         m_context->m_states->ProcessStateChange();
-        m_context->m_states->getCurrent()->Update(TIME_PER_FRAME);
-        m_context->m_states->getCurrent()->ProcessInput();
-        m_context->m_states->getCurrent()->Draw();
+
+        // Nếu hết state → đóng game
+        if (m_context->m_states->isEmpty())
+        {
+            m_context->m_window->close();
+            break;
+        }
+
+        auto& currentState = m_context->m_states->getCurrent();
+
+        currentState->ProcessInput();
+        currentState->Update(dt);
+        currentState->Draw();
     }
 }

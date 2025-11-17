@@ -1,4 +1,5 @@
 #pragma once
+
 #include <memory>
 
 #include <SFML/Graphics/RenderWindow.hpp>
@@ -8,7 +9,7 @@
 
 enum AssetID
 {
-    MAIN_FONT=0
+    MAIN_FONT = 0
 };
 
 struct Context
@@ -19,18 +20,20 @@ struct Context
 
     Context()
     {
-        m_assets=std::make_unique<Engine::AssetMan>();
-        m_states=std::make_unique<Engine::StateManager>();
-        m_window=std::make_unique<sf::RenderWindow>();
+        m_assets  = std::make_unique<Engine::AssetMan>();
+        m_states  = std::make_unique<Engine::StateManager>();
+        m_window  = std::make_unique<sf::RenderWindow>();
     }
 };
+
 class GameApp
 {
-    private:
+private:
     std::shared_ptr<Context> m_context;
-    const sf::Time TIME_PER_FRAME =sf::seconds(1.f/60.f);
+
 public:
     GameApp();
     ~GameApp();
+
     void Run();
 };

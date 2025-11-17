@@ -7,16 +7,16 @@ namespace Engine
     class State
     {
     public:
-        State(){};
-        virtual ~State(){};
+        State() = default;
+        virtual ~State() = default;
 
-        virtual void Init()=0;
-        virtual void ProcessInput()=0;
-        virtual void Update(sf::Time deltaTime)=0;
-        virtual void Draw()=0;
+        virtual void Init() = 0;
+        virtual void ProcessInput() = 0;
+        virtual void Update(sf::Time deltaTime) = 0;
+        virtual void Draw() = 0;
 
-        virtual void Pause(){};
-        virtual void Start(){};
-
+        // Hooks, nếu không dùng thì để trống cũng được
+        virtual void Pause() {}
+        virtual void Start() {}
     };
-};
+}
