@@ -1,11 +1,15 @@
 #pragma once
-
 #include <memory>
 
 #include <SFML/Graphics/RenderWindow.hpp>
 
-#include <AssetMan.hpp>
-#include <StateManager.hpp>
+#include "AssetMan.hpp"
+#include "StateManager.hpp"
+
+enum AssetID
+{
+    MAIN_FONT=0
+};
 
 struct Context
 {
@@ -20,12 +24,13 @@ struct Context
         m_window=std::make_unique<sf::RenderWindow>();
     }
 };
-class Game {
-private:
+class GameApp
+{
+    private:
     std::shared_ptr<Context> m_context;
-    const sf::Time TIME_PER_SECOND =sf::seconds(1.f/60.f);
+    const sf::Time TIME_PER_FRAME =sf::seconds(1.f/60.f);
 public:
-    Game();
-    ~Game();
+    GameApp();
+    ~GameApp();
     void Run();
 };

@@ -7,7 +7,7 @@ Engine::StateManager::StateManager() :m_add{false},m_replace{false},m_remove{fal
 Engine::StateManager::~StateManager()
 {
 }
-void Engine::StateManager::Add(std::unique_ptr<State> toAdd,bool replace =false)
+void Engine::StateManager::Add(std::unique_ptr<State> toAdd,bool replace )
 {
     m_add=true;
     m_newState=std::move(toAdd);
@@ -20,6 +20,8 @@ void Engine::StateManager::PopCurrent()
 }
 void Engine::StateManager::ProcessStateChange()
 {
+
+
     if(m_remove&&!m_stateStack.empty())
     {
         m_stateStack.pop();
@@ -41,6 +43,8 @@ void Engine::StateManager::ProcessStateChange()
             m_stateStack.top()->Pause();
         }
         m_stateStack.push(std::move(m_newState));
+        m_stateStack.top()->Init();
+        m_stateStack.top()->Start();
         m_add=false;
     }
 }
