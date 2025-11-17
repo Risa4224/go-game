@@ -8,11 +8,38 @@
 
 using namespace std;
 
+Game::~Game() {
+    delete board;
+}
+
+Game::Game(const Game& other) 
+    : board(new Board(*(other.board))), // ✅ Khởi tạo Boasrd MỚI
+      turn(other.turn), 
+      groups(other.groups)
+{
+    // Thân hàm BỎ TRỐNG
+}
+// game.cpp (SỬA LỖI)
+Game& Game::operator=(const Game& other) {
+    if (this != &other) { // Kiểm tra tự gán (self-assignment)
+        
+        // 1. Giải phóng bộ nhớ Board CŨ trước
+        delete this->board;
+        
+        // 2. Deep Copy Board MỚI
+        this->board = new Board(*(other.board));
+        
+        // 3. Sao chép các biến trạng thái cốt lõi
+        this->turn = other.turn;
+        this->groups = other.groups;
+        
+        // KHÔNG sao chép history và future để bảo toàn trạng thái undo/redo hiện tại
+    }
+    return *this;
+}
+
 Game::Game(Board* b) : board(b), turn(BLACK) {}
 
-Game::Game(const Game& other) : board(other.board), turn(other.turn), groups(other.groups){
-    this->board = new Board(*(other.board));
-}
 
 // Phương thức Logic Game (PRIVATE)
 PieceColor Game::oppositeColor(PieceColor input) const {
@@ -195,7 +222,7 @@ bool Game::placeStone(int x, int y) {
         std::cout << "Invalid move: spot already occupied or out of bounds." << endl;
         return false;
     }
-    
+    history.push_back(*this); // Lưu trạng thái hiện tại vào lịch sử trước khi thay đổi
     PieceColor current_color = turn;
 
     // --- BẮT ĐẦU NƯỚC ĐI TẠM THỜI ---
@@ -225,7 +252,7 @@ bool Game::placeStone(int x, int y) {
     if (captures == 0 && calcLiberties(placed_group_id) == 0) {
         
         // --- NƯỚC ĐI TỰ SÁT: THỰC HIỆN HOÀN TÁC (ROLLBACK) ---
-        
+        history.pop_back();
         cout << "Invalid move: Suicide (Group has 0 liberties and no captures)." << endl;
         
         // 1. Khôi phục groups về trạng thái ban đầu (trước khi processGroups)
@@ -237,8 +264,8 @@ bool Game::placeStone(int x, int y) {
         return false; // Nước đi bất hợp lệ, không chuyển lượt
     }
 
-    // 7. KẾT THÚC NƯỚC ĐI HỢP LỆ (Nếu nước đi vượt qua kiểm tra)
-    
+    // 7. KẾT THÚC NƯỚC ĐI HỢP LỆ (Nếu nước đi vượt qua kiểm tra)   
+    future.clear();
     // Switch the turn
     turn = oppositeColor(turn);
     
@@ -260,4 +287,43 @@ void Game::printDebug() const {
         cout << endl;
     }
     cout << "--------------------" << endl;
+}
+
+// game.cpp
+
+bool Game::undo() {
+    if (history.empty()) {
+        std::cout << "Cannot undo: No previous states." << std::endl;
+        return false;
+    }
+    
+    Game prevState = history.back(); 
+    history.pop_back(); 
+    
+    // Lưu trạng thái HIỆN TẠI (trước Undo) vào future
+    future.push_back(*this); // Sẽ gọi Copy Constructor đã sửa lỗi
+    
+    // Gán trạng thái MỚI VÀ ĐỘC LẬP (prevState) cho đối tượng hiện tại (*this)
+    *this = prevState; // Sẽ gọi Copy Assignment Operator đã sửa lỗi
+    
+    std::cout << "Undo successful. Game state reverted to previous turn." << std::endl;
+    return true;
+}
+bool Game::redo() {
+    if (future.empty()) {
+        std::cout << "Cannot redo: No future states." << std::endl; // Lỗi này sẽ không xuất hiện nữa
+        return false;
+    }
+    
+    Game nextState = future.back(); 
+    future.pop_back(); 
+    
+    // Lưu trạng thái HIỆN TẠI (trước Redo) vào history
+    history.push_back(*this); // Sẽ gọi Copy Constructor đã sửa lỗi
+    
+    // Gán trạng thái MỚI VÀ ĐỘC LẬP (nextState) cho đối tượng hiện tại (*this)
+    *this = nextState; // Sẽ gọi Copy Assignment Operator đã sửa lỗi
+
+    std::cout << "Redo successful. Game state moved forward." << std::endl;
+    return true;
 }
