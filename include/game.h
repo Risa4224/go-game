@@ -5,9 +5,12 @@
 #include "board.h"
 #include <vector>
 #include <iostream>
+#include <set>
 
 class Game {
 private:
+    int black_captures = 0;
+    int white_captures = 0;
     Board* board;
     PieceColor turn;
     std::vector<PieceGroup> groups; // Dữ liệu logic game
@@ -20,6 +23,7 @@ private:
     int findGroupIndex(int x, int y);
     int calcLiberties(int x);
     bool valid(int x, int y) const;
+    PieceColor getTerritoryOwner(int x, int y, std::set<int>& visited) const;
 public:
     ~Game();
     Game(const Game& other);
@@ -32,6 +36,7 @@ public:
     void printDebug() const; 
     bool redo();
     bool undo();
+    void calculateFinalScore(float komi = 6.5f) const;
 };
 
 #endif
