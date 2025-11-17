@@ -6,14 +6,40 @@
 #include <fstream>
 
 
+using namespace std;
 
-using namespace std;    
+Game::~Game() {
+    delete board;
+}
+
+Game::Game(const Game& other) 
+    : board(new Board(*(other.board))), // ✅ Khởi tạo Boasrd MỚI
+      turn(other.turn), 
+      groups(other.groups)
+{
+    // Thân hàm BỎ TRỐNG
+}
+// game.cpp (SỬA LỖI)
+Game& Game::operator=(const Game& other) {
+    if (this != &other) { // Kiểm tra tự gán (self-assignment)
+        
+        // 1. Giải phóng bộ nhớ Board CŨ trước
+        delete this->board;
+        
+        // 2. Deep Copy Board MỚI
+        this->board = new Board(*(other.board));
+        
+        // 3. Sao chép các biến trạng thái cốt lõi
+        this->turn = other.turn;
+        this->groups = other.groups;
+        
+        // KHÔNG sao chép history và future để bảo toàn trạng thái undo/redo hiện tại
+    }
+    return *this;
+}
 
 Game::Game(Board* b) : board(b), turn(BLACK) {}
 
-Game::Game(const Game& other) : board(other.board), turn(other.turn), groups(other.groups){
-    this->board = new Board(*(other.board));
-}
 
 // Phương thức Logic Game (PRIVATE)
 PieceColor Game::oppositeColor(PieceColor input) const {
@@ -196,7 +222,7 @@ bool Game::placeStone(int x, int y) {
         std::cout << "Invalid move: spot already occupied or out of bounds." << endl;
         return false;
     }
-    
+    history.push_back(*this); // Lưu trạng thái hiện tại vào lịch sử trước khi thay đổi
     PieceColor current_color = turn;
 
     // --- BẮT ĐẦU NƯỚC ĐI TẠM THỜI ---
@@ -222,13 +248,16 @@ bool Game::placeStone(int x, int y) {
     // VÀ
     // b) Nhóm quân vừa đặt (sau khi bắt quân, nếu có) bị hết khí (calcLiberties(id) == 0)
     cout << "number of captures : " << captures << '\n' << calcLiberties(placed_group_id) << '\n';
-    
+
+    if(current_color == BLACK) black_captures += captures;
+    else white_captures += captures;
     if (captures == 0 && calcLiberties(placed_group_id) == 0) {
         
         // --- NƯỚC ĐI TỰ SÁT: THỰC HIỆN HOÀN TÁC (ROLLBACK) ---
-        
+        history.pop_back();
         cout << "Invalid move: Suicide (Group has 0 liberties and no captures)." << endl;
-        
+        if(current_color == BLACK) black_captures += captures;
+        else white_captures += captures;
         // 1. Khôi phục groups về trạng thái ban đầu (trước khi processGroups)
         groups = groups_backup;         
         
@@ -238,8 +267,8 @@ bool Game::placeStone(int x, int y) {
         return false; // Nước đi bất hợp lệ, không chuyển lượt
     }
 
-    // 7. KẾT THÚC NƯỚC ĐI HỢP LỆ (Nếu nước đi vượt qua kiểm tra)
-    
+    // 7. KẾT THÚC NƯỚC ĐI HỢP LỆ (Nếu nước đi vượt qua kiểm tra)   
+    future.clear();
     // Switch the turn
     turn = oppositeColor(turn);
     
@@ -263,4 +292,148 @@ void Game::printDebug() const {
     cout << "--------------------" << endl;
 }
 
+// game.cpp
 
+bool Game::undo() {
+    if (history.empty()) {
+        std::cout << "Cannot undo: No previous states." << std::endl;
+        return false;
+    }
+    
+    Game prevState = history.back(); 
+    history.pop_back(); 
+    
+    // Lưu trạng thái HIỆN TẠI (trước Undo) vào future
+    future.push_back(*this); // Sẽ gọi Copy Constructor đã sửa lỗi
+    
+    // Gán trạng thái MỚI VÀ ĐỘC LẬP (prevState) cho đối tượng hiện tại (*this)
+    *this = prevState; // Sẽ gọi Copy Assignment Operator đã sửa lỗi
+    
+    std::cout << "Undo successful. Game state reverted to previous turn." << std::endl;
+    return true;
+}
+bool Game::redo() {
+    if (future.empty()) {
+        std::cout << "Cannot redo: No future states." << std::endl; // Lỗi này sẽ không xuất hiện nữa
+        return false;
+    }
+    
+    Game nextState = future.back(); 
+    future.pop_back(); 
+    
+    // Lưu trạng thái HIỆN TẠI (trước Redo) vào history
+    history.push_back(*this); // Sẽ gọi Copy Constructor đã sửa lỗi
+    
+    // Gán trạng thái MỚI VÀ ĐỘC LẬP (nextState) cho đối tượng hiện tại (*this)
+    *this = nextState; // Sẽ gọi Copy Assignment Operator đã sửa lỗi
+
+    std::cout << "Redo successful. Game state moved forward." << std::endl;
+    return true;
+}
+
+// game.cpp
+
+// Trả về NONE, BLACK, WHITE, hoặc AMBIGUOUS (Tùy thuộc vào các màu biên)
+PieceColor Game::getTerritoryOwner(int x, int y, std::set<int>& territory_set) const {
+    
+    // 1. Kiểm tra biên
+    if (x < 0 || x >= 19 || y < 0 || y >= 19) return NONE;
+    
+    int pos = x * 19 + y;
+    if (territory_set.count(pos)) return NONE; // Đã thăm trong lần gọi này
+
+    PieceColor piece = board->getPiece(x, y);
+
+    // 2. Nếu gặp quân cờ, trả về màu quân cờ đó (Đây là biên lãnh thổ)
+    if (piece != NONE) return piece; 
+
+    // 3. Nếu là ô trống, thêm vào lãnh thổ
+    territory_set.insert(pos);
+    
+    // Khởi tạo các màu biên (BOUNDARY COLORS)
+    std::set<PieceColor> boundary_colors;
+    
+    // 4. Duyệt 4 hướng (Đệ quy)
+    int dx[] = {-1, 1, 0, 0};
+    int dy[] = {0, 0, -1, 1};
+
+    for (int i = 0; i < 4; ++i) {
+        PieceColor neighbor_owner = getTerritoryOwner(x + dx[i], y + dy[i], territory_set);
+        
+        if (neighbor_owner != NONE) {
+            boundary_colors.insert(neighbor_owner);
+        }
+    }
+    
+    // 5. Logic xác định chủ sở hữu lãnh thổ
+    if (boundary_colors.empty()) {
+        // Lãnh thổ chưa bị bao quanh (Border of the board or huge open area)
+        return NONE; 
+    } else if (boundary_colors.size() == 1) {
+        // Lãnh thổ đã được xác định bởi MỘT màu duy nhất
+        return *boundary_colors.begin();
+    } else {
+        // Có nhiều màu bao quanh (khu vực tranh chấp/ko rõ ràng)
+        return NONE; 
+    }
+}
+
+// game.cpp
+
+void Game::calculateFinalScore(float komi) const {
+    float black_territory = 0;
+    float white_territory = 0;
+    
+    // Set để theo dõi các ô đã được kiểm tra (tránh tính toán lại)
+    std::set<int> visited_empty_points; 
+
+    // 1. TÍNH ĐIỂM LÃNH THỔ (TERRITORY)
+    for (int x = 0; x < 19; ++x) {
+        for (int y = 0; y < 19; y++) {
+            
+            // Nếu ô là trống VÀ chưa được kiểm tra
+            if (board->getPiece(x, y) == NONE && 
+                visited_empty_points.find(x * 19 + y) == visited_empty_points.end()) {
+                
+                std::set<int> current_territory;
+                // Gọi hàm DFS/Flood Fill để xác định chủ sở hữu
+                PieceColor owner = getTerritoryOwner(x, y, current_territory); 
+
+                if (owner == BLACK) {
+                    black_territory += current_territory.size();
+                } else if (owner == WHITE) {
+                    white_territory += current_territory.size();
+                }
+                
+                // Đánh dấu tất cả các ô đã thăm
+                visited_empty_points.insert(current_territory.begin(), current_territory.end());
+            }
+        }
+    }
+
+    // 2. TÍNH TỔNG ĐIỂM CUỐI CÙNG (Territory Scoring: Lãnh thổ + Quân bắt)
+    
+    // LƯU Ý QUAN TRỌNG: Bạn phải đảm bảo black_captures và white_captures 
+    // đã được cập nhật chính xác trong hàm removeGroup.
+    // Nếu chưa có, các biến này sẽ là 0.
+    
+    float black_final_score = black_territory + black_captures;
+    float white_final_score = white_territory + white_captures + komi;
+
+    // 3. IN KẾT QUẢ
+    std::cout << "\n===================================" << std::endl;
+    std::cout << "          FINAL SCORE REPORT         " << std::endl;
+    std::cout << "===================================" << std::endl;
+    std::cout << "Black Territory: " << black_territory << " + Captures: " << black_captures << std::endl;
+    std::cout << "White Territory: " << white_territory << " + Captures: " << white_captures << " + Komi: " << komi << std::endl;
+    std::cout << "Final Black Score: " << black_final_score << std::endl;
+    std::cout << "Final White Score: " << white_final_score << std::endl;
+
+    if (black_final_score > white_final_score) {
+        std::cout << "Winner: BLACK (by " << black_final_score - white_final_score << " points)" << std::endl;
+    } else if (white_final_score > black_final_score) {
+        std::cout << "Winner: WHITE (by " << white_final_score - black_final_score << " points)" << std::endl;
+    } else {
+        std::cout << "Tied! (Draw)" << std::endl;
+    }
+}

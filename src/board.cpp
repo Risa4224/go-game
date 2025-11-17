@@ -40,6 +40,7 @@ void Board::setPiece(int x, int y, PieceColor c) {
 
 // debug functions
 void Board::printDebug() const {
+    std::cout << "--- BOARD STATE ---" << std::endl;
     for(int i = 0; i < 19; ++i) {
         for(int j = 0; j < 19; ++j) {
             std::cout << getPiece(i, j) << " ";
