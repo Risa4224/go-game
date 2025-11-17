@@ -13,30 +13,36 @@
 #include "State.hpp"
 #include "GameApp.h"
 
+#include "game.h"      // 🔥 dùng Game
+#include "nonclass.h"  // để có PieceColor
+
 class MainBoard : public Engine::State
 {
 private:
     std::shared_ptr<Context> m_context;
 
-    // Nền bàn cờ
-    sf::RectangleShape m_boardBackground;
-    // Các đường lưới
-    std::vector<sf::VertexArray> m_gridLines;
+    // Bàn cờ
+    sf::RectangleShape              m_boardBackground;
+    std::vector<sf::VertexArray>    m_gridLines;
 
-    // Text (dùng optional vì sf::Text không có default ctor trong SFML 3)
-    std::optional<sf::Text> m_titleText;
-    std::optional<sf::Text> m_hintText;
+    // Text
+    std::optional<sf::Text>         m_titleText;
+    std::optional<sf::Text>         m_hintText;
 
-    // Thông tin bàn cờ
-    unsigned int m_boardSize;          // 19x19
-    sf::Vector2f m_boardTopLeft;       // góc trên trái của vùng lưới
-    float m_boardPixelSize;            // kích thước pixel của bàn (vuông)
-    float m_cellSize;                  // khoảng cách giữa các đường lưới
+    // Thông tin lưới
+    unsigned int                    m_boardSize;      // 19x19
+    sf::Vector2f                    m_boardTopLeft;
+    float                           m_boardPixelSize;
+    float                           m_cellSize;
 
-    // Trạng thái quân cờ: 0 = trống, 1 = đen, 2 = trắng
-    std::vector<std::vector<int>> m_boardState;
-    std::vector<sf::CircleShape> m_stones;
-    bool m_isBlackTurn;
+    // 🔥 Logic game
+    std::unique_ptr<Game>           m_game;
+
+    // Các hình tròn để vẽ quân cờ
+    std::vector<sf::CircleShape>    m_stones;
+
+    // helper: dựng lại quân cờ từ Board
+    void rebuildStones();
 
 public:
     MainBoard(std::shared_ptr<Context>& context);

@@ -30,6 +30,7 @@ public:
     Game& operator=(const Game& other);
     Game(Board* b); 
     PieceColor getTurn() const { return turn; }
+    Board* getBoard() const { return board; }
     bool placeStone(int x, int y); 
     bool ended(int x, int y);
     bool checkKO() const;

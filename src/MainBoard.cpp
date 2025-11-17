@@ -12,16 +12,63 @@ MainBoard::MainBoard(std::shared_ptr<Context>& context)
     , m_boardTopLeft{0.f, 0.f}
     , m_boardPixelSize(0.f)
     , m_cellSize(0.f)
-    , m_boardState{}
+    , m_game(nullptr)
     , m_stones{}
-    , m_isBlackTurn(true)
 {
 }
 
 MainBoard::~MainBoard() = default;
 
+// 🔧 dựng lại vector m_stones từ Board trong Game
+void MainBoard::rebuildStones()
+{
+    m_stones.clear();
+    if (!m_game) return;
+
+    Board* b = m_game->getBoard();
+    if (!b) return;
+
+    const int size = b->getSize(); // 19
+    for (int x = 0; x < size; ++x)
+    {
+        for (int y = 0; y < size; ++y)
+        {
+            PieceColor pc = b->getPiece(x, y);
+            if (pc == NONE) continue;
+
+            float radius = m_cellSize * 0.4f;
+            sf::CircleShape stone(radius);
+            stone.setOrigin({radius, radius});
+
+            sf::Vector2f pos = {
+                m_boardTopLeft.x + x * m_cellSize,
+                m_boardTopLeft.y + y * m_cellSize
+            };
+            stone.setPosition(pos);
+
+            if (pc == BLACK)
+            {
+                stone.setFillColor(sf::Color::Black);
+                stone.setOutlineThickness(1.f);
+                stone.setOutlineColor(sf::Color(220, 220, 220));
+            }
+            else if (pc == WHITE)
+            {
+                stone.setFillColor(sf::Color::White);
+                stone.setOutlineThickness(1.f);
+                stone.setOutlineColor(sf::Color::Black);
+            }
+
+            m_stones.push_back(stone);
+        }
+    }
+}
+
 void MainBoard::Init()
 {
+    // 🔥 Tạo Game + Board logic
+    m_game = std::make_unique<Game>(new Board());
+
     auto& font = m_context->m_assets->GetFont(MAIN_FONT);
 
     // ----- Title -----
@@ -101,10 +148,8 @@ void MainBoard::Init()
         m_gridLines.push_back(line);
     }
 
-    // ----- Trạng thái bàn -----
-    m_boardState.assign(m_boardSize, std::vector<int>(m_boardSize, 0));
-    m_stones.clear();
-    m_isBlackTurn = true;
+    // Bàn đang trống → dựng stones (sẽ không có gì)
+    rebuildStones();
 }
 
 void MainBoard::ProcessInput()
@@ -117,7 +162,6 @@ void MainBoard::ProcessInput()
             return;
         }
 
-        // ESC: back
         if (const auto* key = event->getIf<sf::Event::KeyPressed>())
         {
             if (key->scancode == sf::Keyboard::Scancode::Escape)
@@ -127,10 +171,9 @@ void MainBoard::ProcessInput()
             }
         }
 
-        // Click chuột trái để đặt quân
         if (const auto* mouseBtn = event->getIf<sf::Event::MouseButtonPressed>())
         {
-            if (mouseBtn->button == sf::Mouse::Button::Left)
+            if (mouseBtn->button == sf::Mouse::Button::Left && m_game)
             {
                 sf::Vector2f mousePos{
                     static_cast<float>(mouseBtn->position.x),
@@ -157,44 +200,22 @@ void MainBoard::ProcessInput()
                 if (ix >= static_cast<int>(m_boardSize)) ix = m_boardSize - 1;
                 if (iy >= static_cast<int>(m_boardSize)) iy = m_boardSize - 1;
 
-                // đã có quân
-                if (m_boardState[iy][ix] != 0)
-                    continue;
-
-                int colorCode = m_isBlackTurn ? 1 : 2;
-                m_boardState[iy][ix] = colorCode;
-
-                float radius = m_cellSize * 0.4f;
-                sf::CircleShape stone(radius);
-                stone.setOrigin({radius, radius});
-
-                sf::Vector2f stonePos = {
-                    m_boardTopLeft.x + ix * m_cellSize,
-                    m_boardTopLeft.y + iy * m_cellSize
-                };
-                stone.setPosition(stonePos);
-
-                if (m_isBlackTurn)
+                // 🔥 Gọi logic đặt quân
+                if (m_game->placeStone(ix, iy))
                 {
-                    stone.setFillColor(sf::Color::Black);
-                    stone.setOutlineThickness(1.f);
-                    stone.setOutlineColor(sf::Color(220, 220, 220));
+                    // nếu nước đi hợp lệ → dựng lại quân cờ theo Board mới
+                    rebuildStones();
                 }
-                else
-                {
-                    stone.setFillColor(sf::Color::White);
-                    stone.setOutlineThickness(1.f);
-                    stone.setOutlineColor(sf::Color::Black);
-                }
-
-                m_stones.push_back(stone);
-                m_isBlackTurn = !m_isBlackTurn;
+                // nếu false: nước đi ko hợp lệ (Suicide / KO), UI không đổi
             }
         }
     }
 }
 
-void MainBoard::Update(sf::Time) { }
+void MainBoard::Update(sf::Time)
+{
+    // hiện chưa cần update liên tục
+}
 
 void MainBoard::Draw()
 {
