@@ -1,6 +1,7 @@
 #include "MainMenu.hpp"
 #include "ModeSelection.hpp"
 #include <SFML/Window/Event.hpp>
+#include "Settings.hpp"
 
 MainMenu::MainMenu(std::shared_ptr<Context>& context)
     : m_context{context}
@@ -8,7 +9,7 @@ MainMenu::MainMenu(std::shared_ptr<Context>& context)
     , m_playButtonText(m_context->m_assets->GetFont(MAIN_FONT), "Play", 40)
     , m_settingsButtonText(m_context->m_assets->GetFont(MAIN_FONT), "Settings", 40)
     , m_exitButtonText(m_context->m_assets->GetFont(MAIN_FONT), "Exit", 40)
-    , m_isPlayButtonSelected(true)
+    , m_isPlayButtonSelected(false)
     , m_isSettingsButtonSelected(false)
     , m_isExitButtonSelected(false)
     , m_isPlayButtonPressed(false)
@@ -28,14 +29,12 @@ void MainMenu::Init()
     const float cx = static_cast<float>(winSize.x) * 0.5f;
     const float cy = static_cast<float>(winSize.y) * 0.5f;
 
-    // Title
     {
         auto bounds = m_gameTitle.getLocalBounds();
         m_gameTitle.setOrigin(bounds.getCenter());
         m_gameTitle.setPosition({cx, cy - 180.f});
     }
 
-    // Play
     {
         auto bounds = m_playButtonBox.getLocalBounds();
         m_playButtonBox.setOrigin(bounds.getCenter());
@@ -45,10 +44,9 @@ void MainMenu::Init()
         auto tBounds = m_playButtonText.getLocalBounds();
         m_playButtonText.setOrigin(tBounds.getCenter());
         m_playButtonText.setPosition(m_playButtonBox.getPosition());
-        m_playButtonText.setFillColor(sf::Color::Yellow);
+        m_playButtonText.setFillColor(sf::Color::White);
     }
 
-    // Settings
     {
         auto bounds = m_settingsButtonBox.getLocalBounds();
         m_settingsButtonBox.setOrigin(bounds.getCenter());
@@ -61,7 +59,6 @@ void MainMenu::Init()
         m_settingsButtonText.setFillColor(sf::Color::White);
     }
 
-    // Exit
     {
         auto bounds = m_exitButtonBox.getLocalBounds();
         m_exitButtonBox.setOrigin(bounds.getCenter());
@@ -83,55 +80,64 @@ void MainMenu::ProcessInput()
         {
             m_context->m_window->close();
         }
-        else if (const auto* keyPressed = event->getIf<sf::Event::KeyPressed>())
+        else if (const auto* mouseMoved = event->getIf<sf::Event::MouseMoved>())
         {
-            if (keyPressed->scancode == sf::Keyboard::Scancode::Up)
+            sf::Vector2f mousePos{
+                static_cast<float>(mouseMoved->position.x),
+                static_cast<float>(mouseMoved->position.y)
+            };
+
+            auto playBounds     = m_playButtonBox.getGlobalBounds();
+            auto settingsBounds = m_settingsButtonBox.getGlobalBounds();
+            auto exitBounds     = m_exitButtonBox.getGlobalBounds();
+
+            // reset selection
+            m_isPlayButtonSelected     = false;
+            m_isSettingsButtonSelected = false;
+            m_isExitButtonSelected     = false;
+
+            if (playBounds.contains(mousePos))
             {
-                if (m_isPlayButtonSelected)
-                {
-                    m_isPlayButtonSelected = false;
-                    m_isExitButtonSelected = true;
-                    m_isSettingsButtonSelected = false;
-                }
-                else if (m_isSettingsButtonSelected)
-                {
-                    m_isSettingsButtonSelected = false;
-                    m_isPlayButtonSelected = true;
-                    m_isExitButtonSelected = false;
-                }
-                else if (m_isExitButtonSelected)
-                {
-                    m_isExitButtonSelected = false;
-                    m_isSettingsButtonSelected = true;
-                    m_isPlayButtonSelected = false;
-                }
+                m_isPlayButtonSelected = true;
             }
-            else if (keyPressed->scancode == sf::Keyboard::Scancode::Down)
+            else if (settingsBounds.contains(mousePos))
             {
-                if (m_isPlayButtonSelected)
-                {
-                    m_isPlayButtonSelected = false;
-                    m_isSettingsButtonSelected = true;
-                    m_isExitButtonSelected = false;
-                }
-                else if (m_isSettingsButtonSelected)
-                {
-                    m_isSettingsButtonSelected = false;
-                    m_isExitButtonSelected = true;
-                    m_isPlayButtonSelected = false;
-                }
-                else if (m_isExitButtonSelected)
-                {
-                    m_isExitButtonSelected = false;
-                    m_isPlayButtonSelected = true;
-                    m_isSettingsButtonSelected = false;
-                }
+                m_isSettingsButtonSelected = true;
             }
-            else if (keyPressed->scancode == sf::Keyboard::Scancode::Enter)
+            else if (exitBounds.contains(mousePos))
             {
-                m_isPlayButtonPressed     = m_isPlayButtonSelected;
-                m_isSettingsButtonPressed = m_isSettingsButtonSelected;
-                m_isExitButtonPressed     = m_isExitButtonSelected;
+                m_isExitButtonSelected = true;
+            }
+        }
+        else if (const auto* mouseButton = event->getIf<sf::Event::MouseButtonPressed>())
+        {
+            if (mouseButton->button == sf::Mouse::Button::Left)
+            {
+                sf::Vector2f mousePos{
+                    static_cast<float>(mouseButton->position.x),
+                    static_cast<float>(mouseButton->position.y)
+                };
+
+                auto playBounds     = m_playButtonBox.getGlobalBounds();
+                auto settingsBounds = m_settingsButtonBox.getGlobalBounds();
+                auto exitBounds     = m_exitButtonBox.getGlobalBounds();
+
+                m_isPlayButtonPressed     = false;
+                m_isSettingsButtonPressed = false;
+                m_isExitButtonPressed     = false;
+
+                if (playBounds.contains(mousePos))
+                {
+                    m_isPlayButtonPressed = true;
+                }
+                else if (settingsBounds.contains(mousePos))
+                {
+                    m_isSettingsButtonPressed = true;
+                }
+                else if (exitBounds.contains(mousePos))
+                {
+                    m_isExitButtonPressed = true;
+                }
             }
         }
     }
@@ -157,7 +163,12 @@ void MainMenu::Update(sf::Time)
         m_settingsButtonText.setFillColor(sf::Color::White);
         m_exitButtonText.setFillColor(sf::Color::Yellow);
     }
-
+    else
+    {
+        m_playButtonText.setFillColor(sf::Color::White);
+        m_settingsButtonText.setFillColor(sf::Color::White);
+        m_exitButtonText.setFillColor(sf::Color::White);
+    }
     if (m_isPlayButtonPressed)
     {
         m_context->m_states->Add(std::make_unique<ModeSelection>(m_context), false);
@@ -166,7 +177,7 @@ void MainMenu::Update(sf::Time)
 
     if (m_isSettingsButtonPressed)
     {
-        // TODO: SettingsState sau này
+        m_context->m_states->Add(std::make_unique<SettingsState>(m_context), false);
         m_isSettingsButtonPressed = false;
     }
 

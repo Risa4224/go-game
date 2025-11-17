@@ -13,6 +13,19 @@ GameApp::GameApp()
 
     m_context->m_assets->AddFont(MAIN_FONT, "assets/fonts/Roboto-VariableFont_wdth,wght.ttf");
 
+ // Nhạc nền
+    if (!m_context->m_music->openFromFile("assets/audio/background.mp3"))
+    {
+        // TODO: log lỗi nếu cần
+    }
+    else
+    {
+        m_context->m_music->setVolume(50.f);       // volume 0–100
+        m_context->m_music->play();
+        m_context->m_musicEnabled = true;
+    }
+
+
     // RẤT QUAN TRỌNG: push MainMenu lần đầu
     m_context->m_states->Add(std::make_unique<MainMenu>(m_context), false);
 }

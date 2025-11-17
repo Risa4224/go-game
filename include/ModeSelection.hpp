@@ -1,11 +1,15 @@
 #pragma once
 
 #include <memory>
-#include "State.hpp"
-#include "GameApp.h"
+#include <optional>
 
+#include <SFML/System/Time.hpp>
 #include <SFML/Graphics/RectangleShape.hpp>
 #include <SFML/Graphics/Text.hpp>
+
+#include "State.hpp"
+#include "GameApp.h"
+#include "MainBoard.hpp"
 
 class ModeSelection : public Engine::State
 {
@@ -14,11 +18,16 @@ private:
 
     sf::RectangleShape m_2PlayersBox;
     sf::RectangleShape m_aiBox;
+    sf::RectangleShape m_backBox;
 
-    sf::Text m_titleText;
-    sf::Text m_2PlayersText;
-    sf::Text m_aiText;
-    sf::Text m_returnText;
+    std::optional<sf::Text> m_titleText;
+    std::optional<sf::Text> m_2PlayersText;
+    std::optional<sf::Text> m_aiText;
+    std::optional<sf::Text> m_backText;
+
+    bool m_2PlayersHovered{false};
+    bool m_aiHovered{false};
+    bool m_backHovered{false};
 
 public:
     ModeSelection(std::shared_ptr<Context>& context);
