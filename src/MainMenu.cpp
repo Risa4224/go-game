@@ -119,7 +119,8 @@ void MainMenu::Update(sf::Time deltaTime)
     if(m_isPlayButtonPressed)
     {
         //Todo GO to Play State
-        m_context->m_states->Add(std::make_unique<ModeSelection>(m_context),true);
+        m_context->m_states->Add(std::make_unique<ModeSelection>(m_context),false);
+        m_isPlayButtonPressed=false;
     }
     else if(m_isSettingButtonPressed)
     {

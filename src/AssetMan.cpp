@@ -1,5 +1,5 @@
 #include "AssetMan.hpp"
-
+#include <iostream>
 Engine::AssetMan::AssetMan()
 {
 }
@@ -36,5 +36,6 @@ const sf::Texture &Engine::AssetMan::GetTexture(int id) const
 
 const sf::Font &Engine::AssetMan::GetFont(int id) const
 {
+    std::cout<<"Trying to get font<<\n";
     return *(m_fonts.at(id).get());
 }
