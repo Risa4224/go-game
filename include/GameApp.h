@@ -7,18 +7,20 @@
 #include "AssetMan.hpp"
 #include "StateManager.hpp"
 
+// ID của asset (font, texture, v.v.)
 enum AssetID
 {
     MAIN_FONT = 0
 };
 
-// ✨ GameMode enum cần đặt ở đây
+// Chế độ chơi
 enum class GameMode
 {
     TwoPlayers,
     AiVsPlayer
 };
 
+// Ngữ cảnh dùng chung cho mọi State
 struct Context
 {
     std::unique_ptr<Engine::AssetMan>      m_assets;
@@ -27,7 +29,7 @@ struct Context
     std::unique_ptr<sf::Music>             m_music;
 
     bool      m_musicEnabled;
-    GameMode  m_gameMode; 
+    GameMode  m_gameMode;
 
     Context()
     {
@@ -38,4 +40,17 @@ struct Context
         m_musicEnabled = true;
         m_gameMode     = GameMode::TwoPlayers;
     }
+};
+
+// Lớp GameApp – vòng lặp game chính
+class GameApp
+{
+private:
+    std::shared_ptr<Context> m_context;
+
+public:
+    GameApp();
+    ~GameApp();
+
+    void Run();
 };
