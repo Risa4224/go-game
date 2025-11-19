@@ -37,6 +37,19 @@ void Board::setPiece(int x, int y, PieceColor c) {
     }
 }
 
+bool Board::isEqual(const Board& other) const {
+    // Kích thước bàn cờ là 19x19
+    for (int i = 0; i < 19; ++i) {
+        for (int j = 0; j < 19; ++j) {
+            // So sánh từng ô
+            if (this->board[i][j] != other.board[i][j]) {
+                return false; // Trả về false ngay khi tìm thấy sự khác biệt
+            }
+        }
+    }
+    return true; // Hai bàn cờ giống hệt nhau
+}
+
 
 // debug functions
 void Board::printDebug() const {

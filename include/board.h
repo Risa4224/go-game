@@ -20,6 +20,8 @@ public:
     int getSize() const { return 19; } 
     
 	void printDebug() const; // Thêm const
+	
+	bool isEqual(const Board& other) const; // So sánh hai bàn cờ, thêm const
 
 private:
     // LOẠI BỎ: std::vector<PieceGroup> groups; (Chuyển sang Game)

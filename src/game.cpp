@@ -23,17 +23,17 @@ Game::Game(const Game& other)
 Game& Game::operator=(const Game& other) {
     if (this != &other) { // Kiểm tra tự gán (self-assignment)
         
-        // 1. Giải phóng bộ nhớ Board CŨ trước
-        delete this->board;
+        // 1. Giải phóng bộ nhớ Board CŨ
+        delete this->board; 
         
         // 2. Deep Copy Board MỚI
         this->board = new Board(*(other.board));
-        
-        // 3. Sao chép các biến trạng thái cốt lõi
+
+        // 4. Sao chép các biến trạng thái cốt lõi
         this->turn = other.turn;
         this->groups = other.groups;
-        
-        // KHÔNG sao chép history và future để bảo toàn trạng thái undo/redo hiện tại
+        this->black_captures = other.black_captures;
+        this->white_captures = other.white_captures;
     }
     return *this;
 }
@@ -92,10 +92,10 @@ void Game::processGroups(int x, int y, PieceColor c) {
 
 int Game::checkCaptures(int x, int y, PieceColor c) {
     int total_captures = 0;
-    std::cout << "Checking captures around (" << x << ", " << y << "):\n";
+    //std::cout << "Checking captures around (" << x << ", " << y << "):\n";
     if(board->getPiece(x-1,y) == oppositeColor(c)) {
-        std::cout << x - 1 << ' ' << y << '\n';
-        std::cout << findGroupIndex(x-1,y) << '\n';
+        //std::cout << x - 1 << ' ' << y << '\n';
+        //std::cout << findGroupIndex(x-1,y) << '\n';
         int groupIdx = findGroupIndex(x-1,y);
         if(groupIdx != -1){
             int tmp = calcLiberties(groupIdx);
@@ -103,8 +103,8 @@ int Game::checkCaptures(int x, int y, PieceColor c) {
         }
     }
     if(board->getPiece(x+1,y) == oppositeColor(c)) {
-        std:: cout << x + 1 << ' ' << y << '\n';
-        std:: cout << findGroupIndex(x+1,y) << '\n';
+        //std:: cout << x + 1 << ' ' << y << '\n';
+        //std:: cout << findGroupIndex(x+1,y) << '\n';
         int groupIdx = findGroupIndex(x+1,y);
         if(groupIdx != -1){
             int tmp = calcLiberties(groupIdx);
@@ -112,8 +112,8 @@ int Game::checkCaptures(int x, int y, PieceColor c) {
         }
     }
     if(board->getPiece(x,y-1) == oppositeColor(c)) {
-        std:: cout << x << ' ' << y - 1 << '\n';       
-        std:: cout << findGroupIndex(x,y-1) << '\n';
+        //std:: cout << x << ' ' << y - 1 << '\n';       
+       // std:: cout << findGroupIndex(x,y-1) << '\n';
         int groupIdx = findGroupIndex(x,y-1);
         if (groupIdx != -1){
             int tmp = calcLiberties(groupIdx);
@@ -121,8 +121,8 @@ int Game::checkCaptures(int x, int y, PieceColor c) {
         }
     }
     if(board->getPiece(x,y+1) == oppositeColor(c)) {
-        std:: cout << x << ' ' << y + 1 << '\n';
-        std:: cout << findGroupIndex(x,y+1) << '\n';
+        //std:: cout << x << ' ' << y + 1 << '\n';
+        //std:: cout << findGroupIndex(x,y+1) << '\n';
         int groupIdx = findGroupIndex(x,y+1);
         if(groupIdx != -1){
             int tmp = calcLiberties(groupIdx);
@@ -162,7 +162,7 @@ void Game::removeGroup(int x, int y, int &a) {
         tempx = location / 19;
         tempy = location % 19;
         a++;
-        std::cout << "Removing piece at (" << tempx << ", " << tempy << ")\n";
+        //std::cout << "Removing piece at (" << tempx << ", " << tempy << ")\n";
         board->removePiece(tempx, tempy); 
     }
     groups.erase(groups.begin() + ind);
@@ -192,7 +192,7 @@ int Game::calcLiberties(int id){
         for (int k = 0; k < 4; ++k) {
             int nx = tempx + dx[k];
             int ny = tempy + dy[k];
-            std::cout << "Calculating liberties for piece at (" << nx << ", " << ny << ")\n";
+            //std::cout << "Calculating liberties for piece at (" << nx << ", " << ny << ")\n";
             // Hàm valid(x,y) của bạn kiểm tra: 
             // 1. Trong biên (in bounds)
             // 2. Ô trống (board->getPiece(x,y) == NONE)
@@ -204,7 +204,7 @@ int Game::calcLiberties(int id){
         }
     }
     // Tổng số khí của nhóm chính là kích thước của set.
-    std::cout << "Total liberties for group " << id << ": " << unique_liberties.size() << std::endl;
+    //std::cout << "Total liberties for group " << id << ": " << unique_liberties.size() << std::endl;
     return unique_liberties.size();
 }
 
@@ -212,9 +212,7 @@ bool Game::ended(int x, int y){
     if(x < 0 || y < 0) return true;
     return false;
 }
-
-
-// game.cpp
+// game.cpp (Phiên bản TỐI ƯU Hóa)
 
 bool Game::placeStone(int x, int y) {
     // 1. KIỂM TRA LUẬT CẤP ĐỘ BOARD
@@ -222,56 +220,76 @@ bool Game::placeStone(int x, int y) {
         std::cout << "Invalid move: spot already occupied or out of bounds." << endl;
         return false;
     }
-    history.push_back(*this); // Lưu trạng thái hiện tại vào lịch sử trước khi thay đổi
-    PieceColor current_color = turn;
-
-    // --- BẮT ĐẦU NƯỚC ĐI TẠM THỜI ---
     
-    // 2. SAO LƯU TRẠNG THÁI groups (QUAN TRỌNG: Để khôi phục nếu là Suicide)
+    // 2. SAO LƯU TRẠNG THÁI HIỆN TẠI (STATE i-1)
+    PieceColor current_color = turn;
     std::vector<PieceGroup> groups_backup = groups;
+    Board temp_board_backup = *board; // Sao lưu Board i-1 (dùng Copy Assignment)
+    int black_captures_backup = black_captures;
+    int white_captures_backup = white_captures;
 
-    // 3. ĐẶT QUÂN TẠM THỜI lên board
+    // 3. TẠM THỜI THỰC HIỆN NƯỚC ĐI (Board lên i)
     board->setPiece(x, y, current_color); 
-
-    // 4. GỘP NHÓM TẠM THỜI (thao tác này thay đổi vector groups)
     processGroups(x, y, current_color); 
     int placed_group_id = findGroupIndex(x, y); 
-
-    // 5. KIỂM TRA VÀ THỰC HIỆN BẮT QUÂN ĐỐI PHƯƠNG
-    // (Lưu ý: checkCaptures sẽ gọi removeGroup, làm sạch board và groups)
     int captures = checkCaptures(x, y, current_color);
-    
-    // 6. KIỂM TRA LUẬT TỰ SÁT (Suicide Rule)
-    
-    // Điều kiện TỰ SÁT:
-    // a) Không bắt được quân nào (captures == 0)
-    // VÀ
-    // b) Nhóm quân vừa đặt (sau khi bắt quân, nếu có) bị hết khí (calcLiberties(id) == 0)
-    cout << "number of captures : " << captures << '\n' << calcLiberties(placed_group_id) << '\n';
 
-    if(current_color == BLACK) black_captures += captures;
-    else white_captures += captures;
-    if (captures == 0 && calcLiberties(placed_group_id) == 0) {
-        
-        // --- NƯỚC ĐI TỰ SÁT: THỰC HIỆN HOÀN TÁC (ROLLBACK) ---
-        history.pop_back();
-        cout << "Invalid move: Suicide (Group has 0 liberties and no captures)." << endl;
-        if(current_color == BLACK) black_captures += captures;
-        else white_captures += captures;
-        // 1. Khôi phục groups về trạng thái ban đầu (trước khi processGroups)
-        groups = groups_backup;         
-        
-        // 2. Xóa quân vừa đặt khỏi board (vì nó không nằm trong groups_backup)
-        board->removePiece(x, y);       
-        
-        return false; // Nước đi bất hợp lệ, không chuyển lượt
+    // 4. Cập nhật Captures tạm thời (Chỉ để kiểm tra luật Suicide)
+    int temp_black_captures = black_captures + ((current_color == BLACK) ? captures : 0);
+    int temp_white_captures = white_captures + ((current_color == WHITE) ? captures : 0);
+    
+    // 5. KIỂM TRA LUẬT KO VÀ TỰ SÁT
+    bool is_suicide = (captures == 0 && calcLiberties(placed_group_id) == 0);
+    bool is_ko_violation = false;
+    
+    // Kiểm tra Ko: So sánh trạng thái i (HIỆN TẠI) với trạng thái i-2 (trong lịch sử)
+    if (history.size() >= 2) {
+         const Board* board_i_minus_2 = history[history.size() - 1].board;
+         if (this->board->isEqual(*board_i_minus_2)) { // So sánh Board i với Board i-2
+             is_ko_violation = true;
+         }
     }
 
-    // 7. KẾT THÚC NƯỚC ĐI HỢP LỆ (Nếu nước đi vượt qua kiểm tra)   
-    future.clear();
-    // Switch the turn
-    turn = oppositeColor(turn);
+    if(is_suicide || is_ko_violation) {
+        
+        // --- ROLLBACK TẤT CẢ VỀ i-1 ---
+        groups = groups_backup;         
+        *board = temp_board_backup; // Khôi phục Board i-1
+        
+        // Khôi phục điểm (đã không thay đổi các biến gốc)
+        
+        if (is_suicide) std::cout << "Invalid move: Suicide." << endl;
+        if (is_ko_violation) std::cout << "Invalid move: Ko Rule violation." << endl;
+        
+        return false; 
+    }
     
+    // 6. NƯỚC ĐI HỢP LỆ -> LƯU TRẠNG THÁI i-1 VÀO LỊCH SỬ
+
+    // Sử dụng bản sao lưu để tạo trạng thái i-1 mới
+    // Lưu ý: *this hiện tại vẫn đang ở trạng thái i. 
+    // Ta phải tạo một đối tượng Game mới hoàn toàn là i-1 để đẩy vào history.
+    
+    // CÁCH ĐƠN GIẢN NHẤT: sử dụng Copy Assignment Operator đã được sửa lỗi
+    Game state_to_save = *this;
+
+    // Khôi phục bản sao về i-1 để lưu vào history
+    *(state_to_save.board) = temp_board_backup; 
+    state_to_save.groups = groups_backup;
+    state_to_save.black_captures = black_captures_backup;
+    state_to_save.white_captures = white_captures_backup;
+    state_to_save.turn = current_color; // Turn TẠI i-1
+
+    // Lưu i-1 vào history
+    history.push_back(state_to_save); // GỌI COPY CONSTRUCTOR
+    
+    // 7. CẬP NHẬT TRẠNG THÁI GAME GỐC (i) VỚI ĐIỂM SỐ
+    black_captures = temp_black_captures;
+    white_captures = temp_white_captures;
+
+    future.clear(); 
+    turn = oppositeColor(turn); // Chuyển sang lượt i+1
+    std::cout << white_captures << ' ' << black_captures << '\n';
     return true;
 }
 
