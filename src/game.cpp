@@ -314,11 +314,12 @@ void Game::printDebug() const {
 
 bool Game::pass(){
     history.push_back(*this);
-    if(++consecutive_passes >= 2){
-        std::cout << "Both players passed consecutively. The game has ended." << std::endl;
-        calculateFinalScore();
-        return true;
-    }
+    // if(++consecutive_passes >= 2){
+    //     std::cout << "Both players passed consecutively. The game has ended." << std::endl;
+    //     calculateFinalScore();
+    //     return true;
+    // }
+    std::cout << "PASSS\n";
     consecutive_passes = 1;
     turn = oppositeColor(turn);
     future.clear();
