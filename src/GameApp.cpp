@@ -21,7 +21,7 @@ GameApp::GameApp()
     // Nhạc nền (nếu có file)
     if (m_context->m_music->openFromFile("assets/audio/background.mp3"))
     {
-        m_context->m_music->setVolume(50.f);
+        m_context->m_music->setVolume(100.f);
         m_context->m_music->play();
         m_context->m_musicEnabled = true;
     }

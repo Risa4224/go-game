@@ -229,7 +229,9 @@ void MainBoard::ProcessInput()
             if (keyPressed->scancode == sf::Keyboard::Scancode::Escape)
             {
                 // ESC từ MainBoard: pop state này → quay lại ModeSelection
+                std::cout<<"Trying to return to menu\n";
                 m_context->m_states->PopCurrent();
+                std::cout<<"Popped current State\n";
                 return;
             }
             else if (keyPressed->scancode == sf::Keyboard::Scancode::Z)
@@ -244,6 +246,14 @@ void MainBoard::ProcessInput()
             {
                 // Redo bằng phím
                 if (m_game && m_game->redo())
+                {
+                    rebuildStonesFromGame();
+                }
+            }
+            else if (keyPressed->scancode == sf::Keyboard::Scancode::P)
+            {
+                // Redo bằng phím
+                if (m_game && m_game->pass())
                 {
                     rebuildStonesFromGame();
                 }

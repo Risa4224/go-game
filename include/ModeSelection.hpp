@@ -3,7 +3,6 @@
 #include <memory>
 #include <optional>
 
-#include <SFML/System/Time.hpp>
 #include <SFML/Graphics/RectangleShape.hpp>
 #include <SFML/Graphics/Text.hpp>
 

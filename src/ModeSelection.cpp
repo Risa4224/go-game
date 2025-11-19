@@ -1,5 +1,6 @@
 #include "ModeSelection.hpp"
 #include <SFML/Window/Event.hpp>
+#include <iostream>
 
 ModeSelection::ModeSelection(std::shared_ptr<Context>& context)
     : m_context{context}
@@ -121,6 +122,7 @@ void ModeSelection::ProcessInput()
                 {
                     m_context->m_gameMode = GameMode::TwoPlayers;
                     m_context->m_states->Add(std::make_unique<MainBoard>(m_context), false);
+                    std::cout<<"2 Players State added\n";
                 }
                 else if (aiBounds.contains(mousePos))
                 {

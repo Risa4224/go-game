@@ -115,7 +115,7 @@ void SettingsState::ProcessInput()
                     {
                         if (m_context->m_musicEnabled)
                         {
-                            m_context->m_music->setVolume(50.f);
+                            m_context->m_music->setVolume(100.f);
                             if (m_context->m_music->getStatus() != sf::SoundSource::Status::Playing)
                                 m_context->m_music->play();
                         }
