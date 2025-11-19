@@ -291,7 +291,7 @@ void MainBoard::ProcessInput()
                 }
 
                 //Click Pass
-                if (m_redoButtonBox.getGlobalBounds().contains(mousePosF))
+                if (m_passButtonBox.getGlobalBounds().contains(mousePosF))
                 {
                     if (m_game && m_game->pass())
                     {
