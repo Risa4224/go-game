@@ -34,6 +34,7 @@ Game& Game::operator=(const Game& other) {
         this->groups = other.groups;
         this->black_captures = other.black_captures;
         this->white_captures = other.white_captures;
+        this->consecutive_passes = other.consecutive_passes;
     }
     return *this;
 }
@@ -290,6 +291,7 @@ bool Game::placeStone(int x, int y) {
     future.clear(); 
     turn = oppositeColor(turn); // Chuyển sang lượt i+1
     std::cout << white_captures << ' ' << black_captures << '\n';
+    consecutive_passes = 0; // Reset lượt pass liên tiếp sau khi đặt cờ thành công
     return true;
 }
 
@@ -310,10 +312,17 @@ void Game::printDebug() const {
     cout << "--------------------" << endl;
 }
 
-void Game::pass(){
+bool Game::pass(){
     history.push_back(*this);
+    if(++consecutive_passes >= 2){
+        std::cout << "Both players passed consecutively. The game has ended." << std::endl;
+        calculateFinalScore();
+        return true;
+    }
+    consecutive_passes = 1;
     turn = oppositeColor(turn);
     future.clear();
+    return false;
 }
 
 // game.cpp

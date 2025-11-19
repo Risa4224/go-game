@@ -11,6 +11,7 @@ class Game {
 private:
     int black_captures = 0;
     int white_captures = 0;
+    int consecutive_passes = 0;
     Board* board;
     PieceColor turn;
     std::vector<PieceGroup> groups; // Dữ liệu logic game
@@ -37,7 +38,7 @@ public:
     void printDebug() const; 
     bool redo();
     bool undo();
-    void pass();
+    bool pass();
     void calculateFinalScore(float komi = 6.5f) const;
 };
 
