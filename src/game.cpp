@@ -310,6 +310,12 @@ void Game::printDebug() const {
     cout << "--------------------" << endl;
 }
 
+void Game::pass(){
+    history.push_back(*this);
+    turn = oppositeColor(turn);
+    future.clear();
+}
+
 // game.cpp
 
 bool Game::undo() {

@@ -37,6 +37,7 @@ public:
     void printDebug() const; 
     bool redo();
     bool undo();
+    void pass();
     void calculateFinalScore(float komi = 6.5f) const;
 };
 
