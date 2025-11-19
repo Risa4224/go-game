@@ -37,8 +37,10 @@ private:
     // Nút Undo / Redo
     sf::RectangleShape m_undoButtonBox;
     sf::RectangleShape m_redoButtonBox;
+    sf::RectangleShape m_passButtonBox;
     bool               m_undoHovered;
     bool               m_redoHovered;
+    bool               m_passHovered;
 
     // Logic game
     std::unique_ptr<Game> m_game;

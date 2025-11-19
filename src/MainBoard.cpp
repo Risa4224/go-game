@@ -73,6 +73,9 @@ void MainBoard::Init()
     m_redoButtonBox.setFillColor(sf::Color(200, 200, 200));
     m_redoButtonBox.setPosition({ winSizeF.x - 150.f, 90.f });
 
+    m_passButtonBox.setSize({ 100.f, 40.f });
+    m_passButtonBox.setFillColor(sf::Color(200, 200, 200));
+    m_passButtonBox.setPosition({ winSizeF.x - 150.f, 140.f });
     // Text cho nút (căn tương đối đơn giản)
     // m_undoText.setFillColor(sf::Color::Black);
     // m_undoText.setPosition(
@@ -255,6 +258,7 @@ void MainBoard::ProcessInput()
 
             m_undoHovered = m_undoButtonBox.getGlobalBounds().contains(mousePos);
             m_redoHovered = m_redoButtonBox.getGlobalBounds().contains(mousePos);
+            m_passHovered = m_passButtonBox.getGlobalBounds().contains(mousePos);
         }
         else if (const auto* mouseBtn = event->getIf<sf::Event::MouseButtonPressed>())
         {
@@ -286,6 +290,15 @@ void MainBoard::ProcessInput()
                     continue;
                 }
 
+                //Click Pass
+                if (m_redoButtonBox.getGlobalBounds().contains(mousePosF))
+                {
+                    if (m_game && m_game->pass())
+                    {
+                        rebuildStonesFromGame();
+                    }
+                    continue;
+                }
                 // Click lên bàn cờ → đặt quân
                 handleLeftClick(mousePos);
             }
@@ -301,6 +314,9 @@ void MainBoard::Update(sf::Time)
     );
     m_redoButtonBox.setFillColor(
         m_redoHovered ? sf::Color(230, 230, 230) : sf::Color(200, 200, 200)
+    );
+    m_passButtonBox.setFillColor(
+    m_passHovered ? sf::Color(230, 230, 230) : sf::Color(200, 200, 200)
     );
 }
 
@@ -328,6 +344,7 @@ void MainBoard::Draw()
     // Nút Undo / Redo
     m_context->m_window->draw(m_undoButtonBox);
     m_context->m_window->draw(m_redoButtonBox);
+    m_context->m_window->draw(m_passButtonBox);
     // m_context->m_window->draw(m_undoText);
     // m_context->m_window->draw(m_redoText);
 
