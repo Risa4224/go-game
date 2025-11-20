@@ -3,18 +3,8 @@
 #include <SFML/Window/Event.hpp>
 #include "Settings.hpp"
 
-MainMenu::MainMenu(std::shared_ptr<Context>& context)
-    : m_context{context}
-    , m_gameTitle(m_context->m_assets->GetFont(MAIN_FONT), "Go Game", 64)
-    , m_playButtonText(m_context->m_assets->GetFont(MAIN_FONT), "Play", 40)
-    , m_settingsButtonText(m_context->m_assets->GetFont(MAIN_FONT), "Settings", 40)
-    , m_exitButtonText(m_context->m_assets->GetFont(MAIN_FONT), "Exit", 40)
-    , m_isPlayButtonSelected(false)
-    , m_isSettingsButtonSelected(false)
-    , m_isExitButtonSelected(false)
-    , m_isPlayButtonPressed(false)
-    , m_isSettingsButtonPressed(false)
-    , m_isExitButtonPressed(false)
+MainMenu::MainMenu(std::shared_ptr<Context> &context)
+    : m_context{context}, m_gameTitle(m_context->m_assets->GetFont(MAIN_FONT), "Go Game", 64), m_playButtonText(m_context->m_assets->GetFont(MAIN_FONT), "Play", 40), m_settingsButtonText(m_context->m_assets->GetFont(MAIN_FONT), "Settings", 40), m_exitButtonText(m_context->m_assets->GetFont(MAIN_FONT), "Exit", 40), m_isPlayButtonSelected(false), m_isSettingsButtonSelected(false), m_isExitButtonSelected(false), m_isPlayButtonPressed(false), m_isSettingsButtonPressed(false), m_isExitButtonPressed(false)
 {
     m_playButtonBox.setSize({300.f, 80.f});
     m_settingsButtonBox.setSize({300.f, 80.f});
@@ -80,21 +70,19 @@ void MainMenu::ProcessInput()
         {
             m_context->m_window->close();
         }
-        else if (const auto* mouseMoved = event->getIf<sf::Event::MouseMoved>())
+        else if (const auto *mouseMoved = event->getIf<sf::Event::MouseMoved>())
         {
             sf::Vector2f mousePos{
                 static_cast<float>(mouseMoved->position.x),
-                static_cast<float>(mouseMoved->position.y)
-            };
+                static_cast<float>(mouseMoved->position.y)};
 
-            auto playBounds     = m_playButtonBox.getGlobalBounds();
+            auto playBounds = m_playButtonBox.getGlobalBounds();
             auto settingsBounds = m_settingsButtonBox.getGlobalBounds();
-            auto exitBounds     = m_exitButtonBox.getGlobalBounds();
+            auto exitBounds = m_exitButtonBox.getGlobalBounds();
 
-            // reset selection
-            m_isPlayButtonSelected     = false;
+                        m_isPlayButtonSelected = false;
             m_isSettingsButtonSelected = false;
-            m_isExitButtonSelected     = false;
+            m_isExitButtonSelected = false;
 
             if (playBounds.contains(mousePos))
             {
@@ -109,22 +97,21 @@ void MainMenu::ProcessInput()
                 m_isExitButtonSelected = true;
             }
         }
-        else if (const auto* mouseButton = event->getIf<sf::Event::MouseButtonPressed>())
+        else if (const auto *mouseButton = event->getIf<sf::Event::MouseButtonPressed>())
         {
             if (mouseButton->button == sf::Mouse::Button::Left)
             {
                 sf::Vector2f mousePos{
                     static_cast<float>(mouseButton->position.x),
-                    static_cast<float>(mouseButton->position.y)
-                };
+                    static_cast<float>(mouseButton->position.y)};
 
-                auto playBounds     = m_playButtonBox.getGlobalBounds();
+                auto playBounds = m_playButtonBox.getGlobalBounds();
                 auto settingsBounds = m_settingsButtonBox.getGlobalBounds();
-                auto exitBounds     = m_exitButtonBox.getGlobalBounds();
+                auto exitBounds = m_exitButtonBox.getGlobalBounds();
 
-                m_isPlayButtonPressed     = false;
+                m_isPlayButtonPressed = false;
                 m_isSettingsButtonPressed = false;
-                m_isExitButtonPressed     = false;
+                m_isExitButtonPressed = false;
 
                 if (playBounds.contains(mousePos))
                 {
@@ -190,7 +177,6 @@ void MainMenu::Update(sf::Time)
 
 void MainMenu::Draw()
 {
-    m_context->m_window->clear({210, 164, 80});
 
     m_context->m_window->draw(m_gameTitle);
 
@@ -201,6 +187,4 @@ void MainMenu::Draw()
     m_context->m_window->draw(m_playButtonText);
     m_context->m_window->draw(m_settingsButtonText);
     m_context->m_window->draw(m_exitButtonText);
-
-    m_context->m_window->display();
 }

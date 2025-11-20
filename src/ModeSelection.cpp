@@ -28,14 +28,14 @@ void ModeSelection::Init()
     const float cx = static_cast<float>(win.x) * 0.5f;
     const float cy = static_cast<float>(win.y) * 0.5f;
 
-    // title
+    
     {
         auto b = m_titleText->getLocalBounds();
         m_titleText->setOrigin(b.getCenter());
         m_titleText->setPosition({cx, cy - 220.f});
     }
 
-    // 2 players
+    
     {
         auto bounds = m_2PlayersBox.getLocalBounds();
         m_2PlayersBox.setOrigin(bounds.getCenter());
@@ -48,7 +48,7 @@ void ModeSelection::Init()
         m_2PlayersText->setFillColor(sf::Color::Black);
     }
 
-    // AI mode
+    
     {
         auto bounds = m_aiBox.getLocalBounds();
         m_aiBox.setOrigin(bounds.getCenter());
@@ -61,7 +61,7 @@ void ModeSelection::Init()
         m_aiText->setFillColor(sf::Color::Black);
     }
 
-    // back
+    
     {
         auto bounds = m_backBox.getLocalBounds();
         m_backBox.setOrigin(bounds.getCenter());
@@ -150,7 +150,6 @@ void ModeSelection::Update(sf::Time)
 
 void ModeSelection::Draw()
 {
-    m_context->m_window->clear({210, 164, 80});
 
     if (m_titleText)    m_context->m_window->draw(*m_titleText);
     m_context->m_window->draw(m_2PlayersBox);
@@ -160,5 +159,4 @@ void ModeSelection::Draw()
     if (m_aiText)       m_context->m_window->draw(*m_aiText);
     if (m_backText)     m_context->m_window->draw(*m_backText);
 
-    m_context->m_window->display();
 }

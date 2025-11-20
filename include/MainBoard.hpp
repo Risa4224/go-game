@@ -5,7 +5,7 @@
 
 #include "State.hpp"
 #include "GameApp.h"
-#include "game.h"  // Game, Board, PieceColor
+#include "game.h"
 
 #include <SFML/Graphics/RectangleShape.hpp>
 #include <SFML/Graphics/Vertex.hpp>
@@ -17,40 +17,33 @@ class MainBoard : public Engine::State
 private:
     std::shared_ptr<Context> m_context;
 
-    // UI bàn cờ
-    sf::RectangleShape        m_boardBackground;
-    std::vector<sf::Vertex>   m_gridLines;
-    float                     m_boardPixelSize;
-    int                       m_boardSize;
-    float                     m_cellSize;
-    sf::Vector2f              m_boardTopLeft;
+    sf::RectangleShape m_boardBackground;
+    std::vector<sf::Vertex> m_gridLines;
+    float m_boardPixelSize;
+    int m_boardSize;
+    float m_cellSize;
+    sf::Vector2f m_boardTopLeft;
 
-    // Quân cờ để vẽ
     std::vector<sf::CircleShape> m_stones;
 
-    // Text
-    // sf::Text m_titleText;
-    // sf::Text m_hintText;
-    // sf::Text m_undoText;
-    // sf::Text m_redoText;
-
-    // Nút Undo / Redo
     sf::RectangleShape m_undoButtonBox;
     sf::RectangleShape m_redoButtonBox;
     sf::RectangleShape m_passButtonBox;
-    bool               m_undoHovered;
-    bool               m_redoHovered;
-    bool               m_passHovered;
+    sf::RectangleShape m_pauseButtonBox;
+    bool m_undoHovered;
+    bool m_redoHovered;
+    bool m_passHovered;
+    bool m_pauseHovered;
 
-    // Logic game
     std::unique_ptr<Game> m_game;
 
     void buildGrid();
     void rebuildStonesFromGame();
-    void handleLeftClick(const sf::Vector2i& pixelPos);
+    void handleLeftClick(const sf::Vector2i &pixelPos);
+    void resetGame();
 
 public:
-    MainBoard(std::shared_ptr<Context>& context);
+    MainBoard(std::shared_ptr<Context> &context);
     ~MainBoard() override = default;
 
     void Init() override;

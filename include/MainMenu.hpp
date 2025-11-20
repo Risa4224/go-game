@@ -31,7 +31,7 @@ private:
     bool m_isExitButtonPressed;
 
 public:
-    MainMenu(std::shared_ptr<Context>& context);
+    MainMenu(std::shared_ptr<Context> &context);
     ~MainMenu() override;
 
     void Init() override;

@@ -5,20 +5,16 @@
 GameApp::GameApp()
     : m_context(std::make_shared<Context>())
 {
-    // Tạo cửa sổ
+
     m_context->m_window->create(
         sf::VideoMode({1000u, 800u}),
         "Go Game",
-        sf::Style::Close
-    );
+        sf::Style::Close);
 
-    // Load font chính
     m_context->m_assets->AddFont(
         MAIN_FONT,
-        "assets/fonts/Roboto-VariableFont_wdth,wght.ttf"
-    );
+        "assets/fonts/Roboto-VariableFont_wdth,wght.ttf");
 
-    // Nhạc nền (nếu có file)
     if (m_context->m_music->openFromFile("assets/audio/background.mp3"))
     {
         m_context->m_music->setVolume(100.f);
@@ -30,7 +26,6 @@ GameApp::GameApp()
         m_context->m_musicEnabled = false;
     }
 
-    // Push MainMenu lần đầu (VERY IMPORTANT)
     m_context->m_states->Add(std::make_unique<MainMenu>(m_context), false);
 }
 
@@ -44,20 +39,36 @@ void GameApp::Run()
     {
         sf::Time dt = clock.restart();
 
-        // Áp dụng các thay đổi push/pop state
         m_context->m_states->ProcessStateChange();
 
-        // Nếu không còn state nào -> đóng game
         if (m_context->m_states->isEmpty())
         {
             m_context->m_window->close();
             break;
         }
 
-        auto& currentState = m_context->m_states->getCurrent();
+        auto &current = m_context->m_states->getCurrent();
 
-        currentState->ProcessInput();
-        currentState->Update(dt);
-        currentState->Draw();
+        current->ProcessInput();
+        current->Update(dt);
+
+        auto &stack = m_context->m_states->getStack();
+        if (stack.empty())
+            continue;
+
+        m_context->m_window->clear(sf::Color(30, 30, 30));
+
+        int startIndex = static_cast<int>(stack.size()) - 1;
+        while (startIndex > 0 && stack[startIndex]->AllowDrawBelow())
+        {
+            --startIndex;
+        }
+
+        for (int i = startIndex; i < static_cast<int>(stack.size()); ++i)
+        {
+            stack[i]->Draw();
+        }
+
+        m_context->m_window->display();
     }
 }

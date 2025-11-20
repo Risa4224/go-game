@@ -1,7 +1,7 @@
 #pragma once
 
 #include <memory>
-#include <stack>
+#include <vector>
 #include "State.hpp"
 
 namespace Engine
@@ -9,7 +9,7 @@ namespace Engine
     class StateManager
     {
     private:
-        std::stack<std::unique_ptr<State>> m_stateStack;
+        std::vector<std::unique_ptr<State>> m_stateStack;
         std::unique_ptr<State> m_newState;
 
         bool m_add;
@@ -24,7 +24,8 @@ namespace Engine
         void PopCurrent();
         void ProcessStateChange();
 
-        std::unique_ptr<State>& getCurrent();
+        std::unique_ptr<State> &getCurrent();
         bool isEmpty() const;
+        std::vector<std::unique_ptr<State>> &getStack() { return m_stateStack; }
     };
 }

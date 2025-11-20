@@ -15,8 +15,9 @@ namespace Engine
         virtual void Update(sf::Time deltaTime) = 0;
         virtual void Draw() = 0;
 
-        // Hooks, nếu không dùng thì để trống cũng được
-        virtual void Pause() {}
+                virtual void Pause() {}
         virtual void Start() {}
+
+        virtual bool AllowDrawBelow() const { return false; }
     };
 }

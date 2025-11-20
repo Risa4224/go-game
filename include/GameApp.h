@@ -30,7 +30,7 @@ struct Context
 
     bool      m_musicEnabled;
     GameMode  m_gameMode;
-
+    bool m_requestBoardRestart = false;
     Context()
     {
         m_assets       = std::make_unique<Engine::AssetMan>();
@@ -39,6 +39,7 @@ struct Context
         m_music        = std::make_unique<sf::Music>();
         m_musicEnabled = true;
         m_gameMode     = GameMode::TwoPlayers;
+        m_requestBoardRestart = false;
     }
 };
 

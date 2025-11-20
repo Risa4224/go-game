@@ -29,7 +29,7 @@ private:
     bool m_backHovered{false};
 
 public:
-    ModeSelection(std::shared_ptr<Context>& context);
+    ModeSelection(std::shared_ptr<Context> &context);
     ~ModeSelection() override;
 
     void Init() override;
