@@ -221,6 +221,7 @@ void MainBoard::ProcessInput()
             m_undoHovered = m_undoButtonBox.getGlobalBounds().contains(mousePos);
             m_redoHovered = m_redoButtonBox.getGlobalBounds().contains(mousePos);
             m_passHovered = m_passButtonBox.getGlobalBounds().contains(mousePos);
+            m_pauseHovered = m_pauseButtonBox.getGlobalBounds().contains(mousePos);
         }
         else if (const auto *mouseBtn = event->getIf<sf::Event::MouseButtonPressed>())
         {
@@ -293,12 +294,13 @@ void MainBoard::Update(sf::Time)
         resetGame();
     }
 
-    m_undoButtonBox.setFillColor(
-        m_undoHovered ? sf::Color(230, 230, 230) : sf::Color(200, 200, 200));
-    m_redoButtonBox.setFillColor(
-        m_redoHovered ? sf::Color(230, 230, 230) : sf::Color(200, 200, 200));
-    m_passButtonBox.setFillColor(
-        m_passHovered ? sf::Color(230, 230, 230) : sf::Color(200, 200, 200));
+    auto normalColor = sf::Color(200, 200, 200);
+    auto hoverColor = sf::Color(230, 230, 230);
+
+    m_undoButtonBox.setFillColor(m_undoHovered ? hoverColor : normalColor);
+    m_redoButtonBox.setFillColor(m_redoHovered ? hoverColor : normalColor);
+    m_passButtonBox.setFillColor(m_passHovered ? hoverColor : normalColor);
+    m_pauseButtonBox.setFillColor(m_pauseHovered ? hoverColor : normalColor);
 }
 
 void MainBoard::Draw()
@@ -317,10 +319,72 @@ void MainBoard::Draw()
     for (const auto &stone : m_stones)
         m_context->m_window->draw(stone);
 
+    auto winSize = m_context->m_window->getSize();
+    {
+        sf::RectangleShape sidePanel;
+        sidePanel.setSize({160.f, 220.f});
+        sidePanel.setFillColor(sf::Color(40, 40, 40, 220));
+        sidePanel.setPosition({static_cast<float>(winSize.x) - 170.f, 30.f});
+        sidePanel.setOutlineThickness(1.f);
+        sidePanel.setOutlineColor(sf::Color(80, 80, 80));
+
+        m_context->m_window->draw(sidePanel);
+    }
+
     m_context->m_window->draw(m_undoButtonBox);
     m_context->m_window->draw(m_redoButtonBox);
     m_context->m_window->draw(m_passButtonBox);
     m_context->m_window->draw(m_pauseButtonBox);
+
+    const sf::Font *fontPtr = nullptr;
+    fontPtr = &m_context->m_assets->GetFont(MAIN_FONT);
+    const sf::Font &font = *fontPtr;
+
+    auto drawCenteredTextOnButton = [&](const sf::RectangleShape &button,
+                                        const std::string &str)
+    {
+        sf::Text text(font, str, 18);
+        auto bounds = text.getLocalBounds();
+        text.setOrigin(bounds.getCenter());
+        text.setFillColor(sf::Color::Black);
+
+        auto pos = button.getPosition();
+        auto size = button.getSize();
+        sf::Vector2f center(pos.x + size.x * 0.5f,
+                            pos.y + size.y * 0.5f);
+
+        text.setPosition(center);
+        m_context->m_window->draw(text);
+    };
+
+    drawCenteredTextOnButton(m_undoButtonBox, "Undo");
+    drawCenteredTextOnButton(m_redoButtonBox, "Redo");
+    drawCenteredTextOnButton(m_passButtonBox, "Pass");
+    drawCenteredTextOnButton(m_pauseButtonBox, "Pause");
+
+    {
+        sf::RectangleShape bottomBar;
+        bottomBar.setSize({static_cast<float>(winSize.x), 30.f});
+        bottomBar.setPosition({0.f,
+                               static_cast<float>(winSize.y) - bottomBar.getSize().y});
+        bottomBar.setFillColor(sf::Color(30, 30, 30, 230));
+
+        m_context->m_window->draw(bottomBar);
+
+        sf::Text hint(
+            font,
+            "ESC: Back | Click board to place stone | Z: Undo / Y: Redo / P: Pass",
+            16);
+        hint.setFillColor(sf::Color::White);
+        hint.setStyle(sf::Text::Bold);
+
+        auto hb = hint.getLocalBounds();
+        hint.setOrigin({hb.position.x, hb.position.y});
+        hint.setPosition({10.f,
+                          static_cast<float>(winSize.y) - bottomBar.getSize().y + 5.f});
+
+        m_context->m_window->draw(hint);
+    }
 }
 
 void MainBoard::resetGame()
