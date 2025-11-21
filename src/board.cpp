@@ -1,7 +1,7 @@
 // board.cpp
 #include <iostream>
 #include "board.h"
-#include "nonclass.h" // Cần nonclass.h
+#include "nonclass.h" 
 #include <fstream>
 
 
@@ -14,10 +14,8 @@ Board::Board() {
             board[i][j] = NONE;
         }
     }
-    // LOẠI BỎ: turn = BLACK;
 }
 
-// getPiece đã sửa, thêm const và check biên
 PieceColor Board::getPiece(int x, int y) const {
     if (x < 0 || x >= 19 || y < 0 || y >= 19) return NONE;
     return board[x][y];
@@ -38,16 +36,15 @@ void Board::setPiece(int x, int y, PieceColor c) {
 }
 
 bool Board::isEqual(const Board& other) const {
-    // Kích thước bàn cờ là 19x19
     for (int i = 0; i < 19; ++i) {
         for (int j = 0; j < 19; ++j) {
             // So sánh từng ô
             if (this->board[i][j] != other.board[i][j]) {
-                return false; // Trả về false ngay khi tìm thấy sự khác biệt
+                return false; 
             }
         }
     }
-    return true; // Hai bàn cờ giống hệt nhau
+    return true; 
 }
 
 
