@@ -34,7 +34,6 @@ private:
     bool m_redoHovered;
     bool m_passHovered;
     bool m_pauseHovered;
-
     std::unique_ptr<Game> m_game;
 
     void buildGrid();
