@@ -428,36 +428,81 @@ bool Game::saveToFile(const std::string& filename) const
         return false;
     }
 
-    // 1) Board size
-    int size = board->getSize(); // If you don't have getSize(), add it in Board
+    const int BOARD_SIZE = 19; // đồng bộ với phần còn lại
 
-    // 2) Basic game metadata
-    out << size << '\n';
+    // 1) Header đơn giản: kích thước board
+    out << BOARD_SIZE << '\n';
+
+    // 2) Metadata cho trạng thái hiện tại
     out << static_cast<int>(turn) << ' '
         << black_captures << ' '
         << white_captures << ' '
         << consecutive_passes << '\n';
 
-    // 3) Board grid: B/W/.
-    for (int y = 0; y < size; ++y)
+    // 3) Bàn cờ hiện tại (B/W/.)
+    for (int y = 0; y < BOARD_SIZE; ++y)
     {
-        for (int x = 0; x < size; ++x)
+        for (int x = 0; x < BOARD_SIZE; ++x)
         {
             PieceColor p = board->getPiece(x, y);
             char c = '.';
-            if (p == BLACK) c = 'B';
+            if (p == BLACK)      c = 'B';
             else if (p == WHITE) c = 'W';
-
             out << c;
         }
         out << '\n';
     }
 
-    // (Optional) you could save more, like komi, finished flag, etc.
+    // 4) Lưu history (toàn bộ timeline phía trước)
+    out << history.size() << '\n';
+    for (const Game& st : history)
+    {
+        out << static_cast<int>(st.turn) << ' '
+            << st.black_captures << ' '
+            << st.white_captures << ' '
+            << st.consecutive_passes << '\n';
+
+        for (int y = 0; y < BOARD_SIZE; ++y)
+        {
+            for (int x = 0; x < BOARD_SIZE; ++x)
+            {
+                PieceColor p = st.board->getPiece(x, y);
+                char c = '.';
+                if (p == BLACK)      c = 'B';
+                else if (p == WHITE) c = 'W';
+                out << c;
+            }
+            out << '\n';
+        }
+    }
+
+    // 5) Lưu future (các trạng thái có thể redo)
+    out << future.size() << '\n';
+    for (const Game& st : future)
+    {
+        out << static_cast<int>(st.turn) << ' '
+            << st.black_captures << ' '
+            << st.white_captures << ' '
+            << st.consecutive_passes << '\n';
+
+        for (int y = 0; y < BOARD_SIZE; ++y)
+        {
+            for (int x = 0; x < BOARD_SIZE; ++x)
+            {
+                PieceColor p = st.board->getPiece(x, y);
+                char c = '.';
+                if (p == BLACK)      c = 'B';
+                else if (p == WHITE) c = 'W';
+                out << c;
+            }
+            out << '\n';
+        }
+    }
 
     out.close();
     return true;
 }
+
 
 bool Game::loadFromFile(const std::string& filename)
 {
@@ -468,10 +513,18 @@ bool Game::loadFromFile(const std::string& filename)
         return false;
     }
 
-    int size = 0;
-    if (!(in >> size))
+    const int BOARD_SIZE_EXPECTED = 19;
+    int boardSize = 0;
+
+    if (!(in >> boardSize))
     {
-        std::cerr << "Invalid save file header.\n";
+        std::cerr << "Invalid save file (cannot read board size).\n";
+        return false;
+    }
+
+    if (boardSize != BOARD_SIZE_EXPECTED)
+    {
+        std::cerr << "Unsupported board size in save file.\n";
         return false;
     }
 
@@ -482,64 +535,174 @@ bool Game::loadFromFile(const std::string& filename)
         return false;
     }
 
-    // consume the end of line after metadata
     std::string line;
-    std::getline(in, line);
+    std::getline(in, line); // ăn nốt phần newline
 
-    // If board size differs, you may need to recreate the board
-    if (size != board->getSize())
+    // 1) Đọc bàn cờ hiện tại
+    for (int y = 0; y < boardSize; ++y)
     {
-        // Option A: if Board has a resize/reinit method, call that
-        // board->resize(size);
-
-        // Option B: if Board(size) constructor exists, recreate:
-        // delete board;
-        // board = new Board(size);
-        // (Adjust depending on your actual Board API.)
-    }
-
-    // Clear current board before loading
-    for (int y = 0; y < size; ++y)
-        for (int x = 0; x < size; ++x)
-            board->setPiece(x, y, NONE);
-
-    // Read board lines
-    for (int y = 0; y < size; ++y)
-    {
-        if (!std::getline(in, line))
+        if (!std::getline(in, line) || (int)line.size() < boardSize)
         {
-            std::cerr << "Unexpected end of file while reading board.\n";
+            std::cerr << "Invalid board row in save file.\n";
             return false;
         }
 
-        if ((int)line.size() < size)
-        {
-            std::cerr << "Invalid line length in save file.\n";
-            return false;
-        }
-
-        for (int x = 0; x < size; ++x)
+        for (int x = 0; x < boardSize; ++x)
         {
             char c = line[x];
             PieceColor p = NONE;
-            if (c == 'B') p = BLACK;
+            if (c == 'B')      p = BLACK;
             else if (c == 'W') p = WHITE;
 
             board->setPiece(x, y, p);
         }
     }
 
-    // Restore turn
+    // Rebuild groups cho trạng thái hiện tại
+    rebuildGroupsFromBoard();
     turn = static_cast<PieceColor>(turnInt);
 
-    // Reset histories; after loading we treat this as a fresh state
-    history.clear();
-    future.clear();
+    // 2) Đọc history
+    std::size_t historySize = 0;
+    if (!(in >> historySize))
+    {
+        // Không đọc được size => coi như không có history
+        history.clear();
+        future.clear();
+        return true;
+    }
+    std::getline(in, line); // ăn newline
 
-    // If you have some "rebuildGroups()" or similar, call it here
-    // to recalculate groups and liberties from the board:
-    //   rebuildGroups();
+    history.clear();
+    history.reserve(historySize);
+
+    for (std::size_t idx = 0; idx < historySize; ++idx)
+    {
+        int hTurnInt = 0;
+        int hBlack = 0, hWhite = 0, hPasses = 0;
+        if (!(in >> hTurnInt >> hBlack >> hWhite >> hPasses))
+        {
+            std::cerr << "Invalid history metadata in save file.\n";
+            return false;
+        }
+        std::getline(in, line); // newline
+
+        // Tạo board snapshot từ current board (copy), sau đó overwrite toàn bộ
+        Board* snapBoard = new Board(*board);
+
+        for (int y = 0; y < boardSize; ++y)
+        {
+            if (!std::getline(in, line) || (int)line.size() < boardSize)
+            {
+                std::cerr << "Invalid history board row.\n";
+                delete snapBoard;
+                return false;
+            }
+
+            for (int x = 0; x < boardSize; ++x)
+            {
+                char c = line[x];
+                PieceColor p = NONE;
+                if (c == 'B')      p = BLACK;
+                else if (c == 'W') p = WHITE;
+
+                snapBoard->setPiece(x, y, p);
+            }
+        }
+
+        Game snapshot(snapBoard);
+        snapshot.turn              = static_cast<PieceColor>(hTurnInt);
+        snapshot.black_captures    = hBlack;
+        snapshot.white_captures    = hWhite;
+        snapshot.consecutive_passes = hPasses;
+
+        snapshot.history.clear();
+        snapshot.future.clear();
+        snapshot.rebuildGroupsFromBoard();
+
+        history.push_back(snapshot);
+    }
+
+    // 3) Đọc future
+    std::size_t futureSize = 0;
+    if (!(in >> futureSize))
+    {
+        // Nếu không đọc được, coi như không có future
+        future.clear();
+        return true;
+    }
+    std::getline(in, line); // newline
+
+    future.clear();
+    future.reserve(futureSize);
+
+    for (std::size_t idx = 0; idx < futureSize; ++idx)
+    {
+        int fTurnInt = 0;
+        int fBlack = 0, fWhite = 0, fPasses = 0;
+        if (!(in >> fTurnInt >> fBlack >> fWhite >> fPasses))
+        {
+            std::cerr << "Invalid future metadata in save file.\n";
+            return false;
+        }
+        std::getline(in, line); // newline
+
+        Board* snapBoard = new Board(*board);
+
+        for (int y = 0; y < boardSize; ++y)
+        {
+            if (!std::getline(in, line) || (int)line.size() < boardSize)
+            {
+                std::cerr << "Invalid future board row.\n";
+                delete snapBoard;
+                return false;
+            }
+
+            for (int x = 0; x < boardSize; ++x)
+            {
+                char c = line[x];
+                PieceColor p = NONE;
+                if (c == 'B')      p = BLACK;
+                else if (c == 'W') p = WHITE;
+
+                snapBoard->setPiece(x, y, p);
+            }
+        }
+
+        Game snapshot(snapBoard);
+        snapshot.turn               = static_cast<PieceColor>(fTurnInt);
+        snapshot.black_captures     = fBlack;
+        snapshot.white_captures     = fWhite;
+        snapshot.consecutive_passes = fPasses;
+
+        snapshot.history.clear();
+        snapshot.future.clear();
+        snapshot.rebuildGroupsFromBoard();
+
+        future.push_back(snapshot);
+    }
 
     in.close();
     return true;
+}
+
+void Game::rebuildGroupsFromBoard()
+{
+    groups.clear();
+
+    // 19x19 – đúng với phần còn lại của code em
+    const int BOARD_SIZE = 19;
+
+    for (int y = 0; y < BOARD_SIZE; ++y)
+    {
+        for (int x = 0; x < BOARD_SIZE; ++x)
+        {
+            PieceColor p = board->getPiece(x, y);
+            if (p != NONE)
+            {
+                // Dùng lại logic nhóm đã có
+                processGroups(x, y, p);
+            }
+        }
+    }
 }
