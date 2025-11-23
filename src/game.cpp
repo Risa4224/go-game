@@ -363,7 +363,7 @@ PieceColor Game::getTerritoryOwner(int x, int y, std::set<int>& territory_set) c
 
 // game.cpp
 
-void Game::calculateFinalScore(float komi) const {
+std::pair<float, float> Game::calculateFinalScore(float komi) const {
     float black_territory = 0;
     float white_territory = 0;
     
@@ -411,4 +411,5 @@ void Game::calculateFinalScore(float komi) const {
     } else {
         std::cout << "Tied! (Draw)" << std::endl;
     }
+    return {black_final_score, white_final_score};
 }
