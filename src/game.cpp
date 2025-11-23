@@ -218,7 +218,6 @@ bool Game::placeStone(int x, int y) {
     int temp_black_captures = black_captures + ((current_color == BLACK) ? captures : 0);
     int temp_white_captures = white_captures + ((current_color == WHITE) ? captures : 0);
     
-    // 5. KIỂM TRA LUẬT KO VÀ TỰ SÁT
     bool is_suicide = (captures == 0 && calcLiberties(placed_group_id) == 0);
     bool is_ko_violation = false;
     
