@@ -276,19 +276,24 @@ void Game::printDebug() const {
     cout << "--------------------" << endl;
 }
 
-bool Game::pass(){
+bool Game::pass() {
     history.push_back(*this);
-    if(++consecutive_passes >= 2){
-        std::cout << "Both players passed consecutively. The game has ended." << std::endl;
-        calculateFinalScore();
+
+    ++consecutive_passes;
+
+    if (consecutive_passes >= 2) {
+        std::cout << "Both players passed consecutively. The game has ended.\n";
+        // Just signal that the game ended. DO NOT call calculateFinalScore here.
         return true;
     }
-    std::cout << "PASSS\n";
-    consecutive_passes = 1;
+
+    std::cout << "PASS\n";
     turn = oppositeColor(turn);
     future.clear();
+
     return false;
 }
+
 
 
 bool Game::undo() {

@@ -206,9 +206,45 @@ void MainBoard::ProcessInput()
             else if (keyPressed->scancode == sf::Keyboard::Scancode::P)
             {
 
-                if (m_game && m_game->pass())
+                if (m_game)
                 {
+                    bool finished = m_game->pass();
                     rebuildStonesFromGame();
+                    if (finished)
+                    {
+                        // --- Calculate final scores ---
+                        auto [blackScore, whiteScore] = m_game->calculateFinalScore();
+
+                        // --- Build winner message ---
+                        std::string msg;
+
+                        if (blackScore > whiteScore)
+                        {
+                            float diff = blackScore - whiteScore;
+                            msg = "Black wins by " + std::to_string(diff) +
+                                " points.\nBlack: " + std::to_string(blackScore) +
+                                " | White: " + std::to_string(whiteScore);
+                        }
+                        else if (whiteScore > blackScore)
+                        {
+                            float diff = whiteScore - blackScore;
+                            msg = "White wins by " + std::to_string(diff) +
+                                " points.\nBlack: " + std::to_string(blackScore) +
+                                " | White: " + std::to_string(whiteScore);
+                        }
+                        else
+                        {
+                            msg = "It's a draw!\nBoth players: " + std::to_string(blackScore);
+                        }
+
+                        // --- Show Game Over screen ---
+                        m_context->m_states->Add(
+                            std::make_unique<PauseState>(
+                                m_context,
+                                PauseState::Mode::GameOver,
+                                msg),
+                            false);
+                    }
                 }
             }
         }
@@ -256,17 +292,39 @@ void MainBoard::ProcessInput()
                     {
                         bool finished = m_game->pass();
                         rebuildStonesFromGame();
-
-                        if (finished)
+                       if (finished)
                         {
+                            // --- Calculate final scores ---
+                            auto [blackScore, whiteScore] = m_game->calculateFinalScore();
 
-                            m_game->calculateFinalScore();
+                            // --- Build winner message ---
+                            std::string msg;
 
+                            if (blackScore > whiteScore)
+                            {
+                                float diff = blackScore - whiteScore;
+                                msg = "Black wins by " + std::to_string(diff) +
+                                    " points.\nBlack: " + std::to_string(blackScore) +
+                                    " | White: " + std::to_string(whiteScore);
+                            }
+                            else if (whiteScore > blackScore)
+                            {
+                                float diff = whiteScore - blackScore;
+                                msg = "White wins by " + std::to_string(diff) +
+                                    " points.\nBlack: " + std::to_string(blackScore) +
+                                    " | White: " + std::to_string(whiteScore);
+                            }
+                            else
+                            {
+                                msg = "It's a draw!\nBoth players: " + std::to_string(blackScore);
+                            }
+
+                            // --- Show Game Over screen ---
                             m_context->m_states->Add(
                                 std::make_unique<PauseState>(
                                     m_context,
                                     PauseState::Mode::GameOver,
-                                    "Game Over"),
+                                    msg),
                                 false);
                         }
                     }
