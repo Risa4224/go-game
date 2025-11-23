@@ -39,7 +39,7 @@ public:
     bool redo();
     bool undo();
     bool pass();
-    void calculateFinalScore(float komi = 6.5f) const;
+    std::pair<float, float> calculateFinalScore(float komi = 6.5f) const;
 };
 
 #endif
