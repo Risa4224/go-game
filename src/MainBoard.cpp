@@ -3,7 +3,7 @@
 #include <iostream>
 #include "PauseState.hpp"
 MainBoard::MainBoard(std::shared_ptr<Context> &context)
-    : m_context(context), m_boardBackground(), m_gridLines(), m_boardPixelSize(650.f), m_boardSize(19), m_cellSize(0.f), m_boardTopLeft(0.f, 0.f), m_stones(), m_undoButtonBox(), m_redoButtonBox(), m_undoHovered(false), m_redoHovered(false), m_game(std::make_unique<Game>(new Board()))
+    : m_context(context), m_boardBackground(), m_gridLines(), m_boardPixelSize(650.f), m_boardSize(19), m_cellSize(0.f), m_boardTopLeft(0.f, 0.f), m_stones(), m_undoButtonBox(), m_redoButtonBox(), m_undoHovered(false), m_redoHovered(false), m_saveHovered(false), m_loadHovered(false), m_game(std::make_unique<Game>(new Board()))
 {
     std::cout << "[MainBoard] ctor\n";
 }
@@ -44,6 +44,14 @@ void MainBoard::Init()
     m_pauseButtonBox.setSize({100.f, 40.f});
     m_pauseButtonBox.setFillColor(sf::Color(200, 200, 200));
     m_pauseButtonBox.setPosition({winSizeF.x - 150.f, 190.f});
+
+    m_saveButtonBox.setSize({100.f, 40.f});
+    m_saveButtonBox.setFillColor(sf::Color(200, 200, 200));
+    m_saveButtonBox.setPosition({winSizeF.x - 150.f, 240.f});
+
+    m_loadButtonBox.setSize({100.f, 40.f});
+    m_loadButtonBox.setFillColor(sf::Color(200, 200, 200));
+    m_loadButtonBox.setPosition({winSizeF.x - 150.f, 290.f});
 
     if (!m_game)
         m_game = std::make_unique<Game>(new Board());
@@ -212,32 +220,30 @@ void MainBoard::ProcessInput()
                     rebuildStonesFromGame();
                     if (finished)
                     {
-                        // --- Calculate final scores ---
+
                         auto [blackScore, whiteScore] = m_game->calculateFinalScore();
 
-                        // --- Build winner message ---
                         std::string msg;
 
                         if (blackScore > whiteScore)
                         {
                             float diff = blackScore - whiteScore;
                             msg = "Black wins by " + std::to_string(diff) +
-                                " points.\nBlack: " + std::to_string(blackScore) +
-                                " | White: " + std::to_string(whiteScore);
+                                  " points.\nBlack: " + std::to_string(blackScore) +
+                                  " | White: " + std::to_string(whiteScore);
                         }
                         else if (whiteScore > blackScore)
                         {
                             float diff = whiteScore - blackScore;
                             msg = "White wins by " + std::to_string(diff) +
-                                " points.\nBlack: " + std::to_string(blackScore) +
-                                " | White: " + std::to_string(whiteScore);
+                                  " points.\nBlack: " + std::to_string(blackScore) +
+                                  " | White: " + std::to_string(whiteScore);
                         }
                         else
                         {
                             msg = "It's a draw!\nBoth players: " + std::to_string(blackScore);
                         }
 
-                        // --- Show Game Over screen ---
                         m_context->m_states->Add(
                             std::make_unique<PauseState>(
                                 m_context,
@@ -258,6 +264,8 @@ void MainBoard::ProcessInput()
             m_redoHovered = m_redoButtonBox.getGlobalBounds().contains(mousePos);
             m_passHovered = m_passButtonBox.getGlobalBounds().contains(mousePos);
             m_pauseHovered = m_pauseButtonBox.getGlobalBounds().contains(mousePos);
+            m_saveHovered = m_saveButtonBox.getGlobalBounds().contains(mousePos);
+            m_loadHovered = m_loadButtonBox.getGlobalBounds().contains(mousePos);
         }
         else if (const auto *mouseBtn = event->getIf<sf::Event::MouseButtonPressed>())
         {
@@ -292,34 +300,32 @@ void MainBoard::ProcessInput()
                     {
                         bool finished = m_game->pass();
                         rebuildStonesFromGame();
-                       if (finished)
+                        if (finished)
                         {
-                            // --- Calculate final scores ---
+
                             auto [blackScore, whiteScore] = m_game->calculateFinalScore();
 
-                            // --- Build winner message ---
                             std::string msg;
 
                             if (blackScore > whiteScore)
                             {
                                 float diff = blackScore - whiteScore;
                                 msg = "Black wins by " + std::to_string(diff) +
-                                    " points.\nBlack: " + std::to_string(blackScore) +
-                                    " | White: " + std::to_string(whiteScore);
+                                      " points.\nBlack: " + std::to_string(blackScore) +
+                                      " | White: " + std::to_string(whiteScore);
                             }
                             else if (whiteScore > blackScore)
                             {
                                 float diff = whiteScore - blackScore;
                                 msg = "White wins by " + std::to_string(diff) +
-                                    " points.\nBlack: " + std::to_string(blackScore) +
-                                    " | White: " + std::to_string(whiteScore);
+                                      " points.\nBlack: " + std::to_string(blackScore) +
+                                      " | White: " + std::to_string(whiteScore);
                             }
                             else
                             {
                                 msg = "It's a draw!\nBoth players: " + std::to_string(blackScore);
                             }
 
-                            // --- Show Game Over screen ---
                             m_context->m_states->Add(
                                 std::make_unique<PauseState>(
                                     m_context,
@@ -336,6 +342,38 @@ void MainBoard::ProcessInput()
                     m_context->m_states->Add(
                         std::make_unique<PauseState>(m_context, PauseState::Mode::Paused),
                         false);
+                }
+                if (m_saveButtonBox.getGlobalBounds().contains(mousePosF))
+                {
+                    if (m_game)
+                    {
+                        if (m_game->saveToFile("savegame.txt"))
+                        {
+                            std::cout << "Game saved.\n";
+                        }
+                        else
+                        {
+                            std::cout << "Failed to save game.\n";
+                        }
+                    }
+                    continue;
+                }
+
+                if (m_loadButtonBox.getGlobalBounds().contains(mousePosF))
+                {
+                    if (m_game)
+                    {
+                        if (m_game->loadFromFile("savegame.txt"))
+                        {
+                            std::cout << "Game loaded.\n";
+                            rebuildStonesFromGame();
+                        }
+                        else
+                        {
+                            std::cout << "Failed to load game.\n";
+                        }
+                    }
+                    continue;
                 }
 
                 handleLeftClick(mousePos);
@@ -359,6 +397,8 @@ void MainBoard::Update(sf::Time)
     m_redoButtonBox.setFillColor(m_redoHovered ? hoverColor : normalColor);
     m_passButtonBox.setFillColor(m_passHovered ? hoverColor : normalColor);
     m_pauseButtonBox.setFillColor(m_pauseHovered ? hoverColor : normalColor);
+    m_saveButtonBox.setFillColor(m_saveHovered ? hoverColor : normalColor);
+    m_loadButtonBox.setFillColor(m_loadHovered ? hoverColor : normalColor);
 }
 
 void MainBoard::Draw()
@@ -380,7 +420,7 @@ void MainBoard::Draw()
     auto winSize = m_context->m_window->getSize();
     {
         sf::RectangleShape sidePanel;
-        sidePanel.setSize({160.f, 220.f});
+        sidePanel.setSize({160.f, 340.f});
         sidePanel.setFillColor(sf::Color(40, 40, 40, 220));
         sidePanel.setPosition({static_cast<float>(winSize.x) - 170.f, 30.f});
         sidePanel.setOutlineThickness(1.f);
@@ -393,10 +433,58 @@ void MainBoard::Draw()
     m_context->m_window->draw(m_redoButtonBox);
     m_context->m_window->draw(m_passButtonBox);
     m_context->m_window->draw(m_pauseButtonBox);
+    m_context->m_window->draw(m_saveButtonBox);
+    m_context->m_window->draw(m_loadButtonBox);
 
     const sf::Font *fontPtr = nullptr;
     fontPtr = &m_context->m_assets->GetFont(MAIN_FONT);
     const sf::Font &font = *fontPtr;
+
+    if (m_game)
+    {
+        PieceColor current = m_game->getTurn();
+        std::string turnStr;
+
+        if (current == BLACK)
+            turnStr = "Turn: Black";
+        else if (current == WHITE)
+            turnStr = "Turn: White";
+        else
+            turnStr = "Turn: -";
+
+        sf::RectangleShape turnPanel;
+        turnPanel.setSize({160.f, 40.f});
+        turnPanel.setFillColor(sf::Color(30, 30, 30, 220));
+        turnPanel.setOutlineThickness(1.f);
+        turnPanel.setOutlineColor(sf::Color(80, 80, 80));
+        turnPanel.setPosition({20.f, 20.f});
+        m_context->m_window->draw(turnPanel);
+
+        sf::Text turnText(font, turnStr, 18);
+        turnText.setFillColor(sf::Color::White);
+        turnText.setStyle(sf::Text::Bold);
+
+        turnText.setPosition({35.f, 25.f});
+        m_context->m_window->draw(turnText);
+
+        sf::CircleShape turnStone(10.f);
+        turnStone.setOrigin({10.f, 10.f});
+        if (current == BLACK)
+        {
+            turnStone.setFillColor(sf::Color::Black);
+            turnStone.setOutlineThickness(1.f);
+            turnStone.setOutlineColor(sf::Color(220, 220, 220));
+        }
+        else if (current == WHITE)
+        {
+            turnStone.setFillColor(sf::Color::White);
+            turnStone.setOutlineThickness(1.f);
+            turnStone.setOutlineColor(sf::Color::Black);
+        }
+
+        turnStone.setPosition({160.f, 40.f});
+        m_context->m_window->draw(turnStone);
+    }
 
     auto drawCenteredTextOnButton = [&](const sf::RectangleShape &button,
                                         const std::string &str)
@@ -419,6 +507,8 @@ void MainBoard::Draw()
     drawCenteredTextOnButton(m_redoButtonBox, "Redo");
     drawCenteredTextOnButton(m_passButtonBox, "Pass");
     drawCenteredTextOnButton(m_pauseButtonBox, "Pause");
+    drawCenteredTextOnButton(m_saveButtonBox, "Save");
+    drawCenteredTextOnButton(m_loadButtonBox, "Load");
 
     {
         sf::RectangleShape bottomBar;

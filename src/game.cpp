@@ -418,3 +418,128 @@ std::pair<float, float> Game::calculateFinalScore(float komi) const {
     }
     return {black_final_score, white_final_score};
 }
+
+bool Game::saveToFile(const std::string& filename) const
+{
+    std::ofstream out(filename);
+    if (!out.is_open())
+    {
+        std::cerr << "Failed to open save file: " << filename << std::endl;
+        return false;
+    }
+
+    // 1) Board size
+    int size = board->getSize(); // If you don't have getSize(), add it in Board
+
+    // 2) Basic game metadata
+    out << size << '\n';
+    out << static_cast<int>(turn) << ' '
+        << black_captures << ' '
+        << white_captures << ' '
+        << consecutive_passes << '\n';
+
+    // 3) Board grid: B/W/.
+    for (int y = 0; y < size; ++y)
+    {
+        for (int x = 0; x < size; ++x)
+        {
+            PieceColor p = board->getPiece(x, y);
+            char c = '.';
+            if (p == BLACK) c = 'B';
+            else if (p == WHITE) c = 'W';
+
+            out << c;
+        }
+        out << '\n';
+    }
+
+    // (Optional) you could save more, like komi, finished flag, etc.
+
+    out.close();
+    return true;
+}
+
+bool Game::loadFromFile(const std::string& filename)
+{
+    std::ifstream in(filename);
+    if (!in.is_open())
+    {
+        std::cerr << "Failed to open save file: " << filename << std::endl;
+        return false;
+    }
+
+    int size = 0;
+    if (!(in >> size))
+    {
+        std::cerr << "Invalid save file header.\n";
+        return false;
+    }
+
+    int turnInt = 0;
+    if (!(in >> turnInt >> black_captures >> white_captures >> consecutive_passes))
+    {
+        std::cerr << "Invalid save file metadata.\n";
+        return false;
+    }
+
+    // consume the end of line after metadata
+    std::string line;
+    std::getline(in, line);
+
+    // If board size differs, you may need to recreate the board
+    if (size != board->getSize())
+    {
+        // Option A: if Board has a resize/reinit method, call that
+        // board->resize(size);
+
+        // Option B: if Board(size) constructor exists, recreate:
+        // delete board;
+        // board = new Board(size);
+        // (Adjust depending on your actual Board API.)
+    }
+
+    // Clear current board before loading
+    for (int y = 0; y < size; ++y)
+        for (int x = 0; x < size; ++x)
+            board->setPiece(x, y, NONE);
+
+    // Read board lines
+    for (int y = 0; y < size; ++y)
+    {
+        if (!std::getline(in, line))
+        {
+            std::cerr << "Unexpected end of file while reading board.\n";
+            return false;
+        }
+
+        if ((int)line.size() < size)
+        {
+            std::cerr << "Invalid line length in save file.\n";
+            return false;
+        }
+
+        for (int x = 0; x < size; ++x)
+        {
+            char c = line[x];
+            PieceColor p = NONE;
+            if (c == 'B') p = BLACK;
+            else if (c == 'W') p = WHITE;
+
+            board->setPiece(x, y, p);
+        }
+    }
+
+    // Restore turn
+    turn = static_cast<PieceColor>(turnInt);
+
+    // Reset histories; after loading we treat this as a fresh state
+    history.clear();
+    future.clear();
+
+    // If you have some "rebuildGroups()" or similar, call it here
+    // to recalculate groups and liberties from the board:
+    //   rebuildGroups();
+
+    in.close();
+    return true;
+}

@@ -30,10 +30,14 @@ private:
     sf::RectangleShape m_redoButtonBox;
     sf::RectangleShape m_passButtonBox;
     sf::RectangleShape m_pauseButtonBox;
+    sf::RectangleShape m_saveButtonBox;
+    sf::RectangleShape m_loadButtonBox;
     bool m_undoHovered;
     bool m_redoHovered;
     bool m_passHovered;
     bool m_pauseHovered;
+    bool m_saveHovered;
+    bool m_loadHovered;
     std::unique_ptr<Game> m_game;
 
     void buildGrid();

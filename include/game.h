@@ -6,7 +6,7 @@
 #include <vector>
 #include <iostream>
 #include <set>
-
+#include <string>
 class Game {
 private:
     int black_captures = 0;
@@ -40,6 +40,8 @@ public:
     bool undo();
     bool pass();
     std::pair<float, float> calculateFinalScore(float komi = 6.5f) const;
+    bool saveToFile(const std::string& filename) const;
+    bool loadFromFile(const std::string& filename);
 };
 
 #endif
