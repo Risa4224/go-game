@@ -1,9 +1,71 @@
-# Ignore executable files
-*.exe
-*.o
-
-# Ignore build directories
+############################################
+# BUILD ARTIFACTS
+############################################
 build/
-release/
-debug/
-.vscode/
+bin/
+out/
+
+# CMake generated files
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+
+############################################
+# COMPILER OUTPUT
+############################################
+# Object files
+*.o
+*.obj
+
+# Executables
+*.exe
+
+# Shared libraries / runtime dlls
+*.dll
+*.so
+*.dylib
+
+############################################
+# SFML / MinGW runtime DLLs
+# (never commit these!)
+############################################
+sfml-graphics-3.dll
+sfml-window-3.dll
+sfml-system-3.dll
+sfml-audio-3.dll
+openal32.dll
+
+libstdc++-6.dll
+libgcc_s_seh-1.dll
+libwinpthread-1.dll
+
+############################################
+# IDE / EDITOR FILES
+############################################
+.vs/
+# .vscode/        # keep this only if you want to share workspace settings
+
+# Visual Studio / CMake Tools metadata
+*.pdb
+*.ilk
+*.idb
+*.tlog
+*.lastbuildstate
+
+# VSCode Intellisense caches
+ipch/
+.vscode/ipch/
+
+############################################
+# LOGS / TEMP
+############################################
+*.log
+*.tmp
+*.cache
+
+############################################
+# OTHER OS-GENERATED FILES
+############################################
+.DS_Store
+Thumbs.db
