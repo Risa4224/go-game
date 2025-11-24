@@ -2,9 +2,8 @@
 #include "game.h"
 #include <iostream>
 #include <cmath> 
-#include <set>
 #include <fstream>
-
+#include <queue>
 
 using namespace std;
 
@@ -350,40 +349,59 @@ bool Game::redo() {
 }
 
 
-PieceColor Game::getTerritoryOwner(int x, int y, std::set<int>& territory_set) const {
-    
-    // 1. Kiểm tra biên
-    if (x < 0 || x >= 19 || y < 0 || y >= 19) return NONE;
-    
-    int pos = x * 19 + y;
-    if (territory_set.count(pos)) return NONE; 
+// game.cpp
 
-    PieceColor piece = board->getPiece(x, y);
-
-    if (piece != NONE) return piece; 
-
-    territory_set.insert(pos);
+// Hàm trả về chủ sở hữu vùng đất (BLACK/WHITE/NONE) 
+// và gán số lượng ô đất vào biến 'territory_size'
+PieceColor Game::getTerritoryOwner(int startX, int startY, int& territory_size, std::vector<std::vector<bool>>& visited) const {
     
-    std::set<PieceColor> boundary_colors;
+    std::queue<std::pair<int, int>> q;
+    q.push({startX, startY});
+    visited[startX][startY] = true;
     
+    territory_size = 0;      // Reset biến đếm
+    bool touchesBlack = false;
+    bool touchesWhite = false;
+
     int dx[] = {-1, 1, 0, 0};
     int dy[] = {0, 0, -1, 1};
 
-    for (int i = 0; i < 4; ++i) {
-        PieceColor neighbor_owner = getTerritoryOwner(x + dx[i], y + dy[i], territory_set);
-        
-        if (neighbor_owner != NONE) {
-            boundary_colors.insert(neighbor_owner);
+    while (!q.empty()) {
+        std::pair<int, int> curr = q.front();
+        q.pop();
+        territory_size++; // Đếm thêm 1 ô đất
+
+        int x = curr.first;
+        int y = curr.second;
+
+        // Kiểm tra 4 ô xung quanh
+        for (int i = 0; i < 4; ++i) {
+            int nx = x + dx[i];
+            int ny = y + dy[i];
+
+            // 1. Kiểm tra biên bàn cờ
+            if (nx < 0 || nx >= 19 || ny < 0 || ny >= 19) continue;
+
+            PieceColor neighborColor = board->getPiece(nx, ny);
+
+            if (neighborColor == NONE) {
+                // Nếu là ô trống và chưa thăm -> Thêm vào hàng đợi
+                if (!visited[nx][ny]) {
+                    visited[nx][ny] = true;
+                    q.push({nx, ny});
+                }
+            } else if (neighborColor == BLACK) {
+                touchesBlack = true;
+            } else if (neighborColor == WHITE) {
+                touchesWhite = true;
+            }
         }
     }
-    
-    if (boundary_colors.empty()) {
-        return NONE; 
-    } else if (boundary_colors.size() == 1) {
-        return *boundary_colors.begin();
-    } else {
-        return NONE; 
-    }
+
+    // Logic quyết định chủ sở hữu
+    if (touchesBlack && !touchesWhite) return BLACK; // Chỉ chạm Đen
+    if (touchesWhite && !touchesBlack) return WHITE; // Chỉ chạm Trắng
+    return NONE; // Chạm cả hai (Dame) hoặc không chạm ai
 }
 
 // game.cpp
@@ -392,31 +410,32 @@ std::pair<float, float> Game::calculateFinalScore(float komi) const {
     float black_territory = 0;
     float white_territory = 0;
     
-    std::set<int> visited_empty_points; 
+    // Mảng đánh dấu các ô đã xét để không đếm trùng
+    // Kích thước 19x19, khởi tạo tất cả là false
+    std::vector<std::vector<bool>> visited(19, std::vector<bool>(19, false));
 
-    // 1. TÍNH ĐIỂM LÃNH THỔ (TERRITORY)
+    // 1. QUÉT TOÀN BỘ BÀN CỜ
     for (int x = 0; x < 19; ++x) {
         for (int y = 0; y < 19; y++) {
             
-            if (board->getPiece(x, y) == NONE && 
-                visited_empty_points.find(x * 19 + y) == visited_empty_points.end()) {
+            // Nếu gặp ô trống chưa được duyệt -> Bắt đầu loang để tính điểm
+            if (board->getPiece(x, y) == NONE && !visited[x][y]) {
                 
-                std::set<int> current_territory;
-                PieceColor owner = getTerritoryOwner(x, y, current_territory); 
+                int current_size = 0; // Biến này sẽ được cập nhật trong hàm getTerritoryOwner
+                PieceColor owner = getTerritoryOwner(x, y, current_size, visited);
 
                 if (owner == BLACK) {
-                    black_territory += current_territory.size();
+                    black_territory += current_size;
                 } else if (owner == WHITE) {
-                    white_territory += current_territory.size();
+                    white_territory += current_size;
                 }
-                
-                visited_empty_points.insert(current_territory.begin(), current_territory.end());
+                // Nếu owner là NONE (vùng trung lập) thì không cộng điểm cho ai
             }
         }
     }
 
-    // 2. TÍNH TỔNG ĐIỂM CUỐI CÙNG (Territory Scoring: Lãnh thổ + Quân bắt)
-    
+    // 2. TỔNG KẾT ĐIỂM
+    // (Giả sử black_captures và white_captures là biến thành viên đã có sẵn)
     float black_final_score = black_territory + black_captures;
     float white_final_score = white_territory + white_captures + komi;
 
@@ -424,18 +443,17 @@ std::pair<float, float> Game::calculateFinalScore(float komi) const {
     std::cout << "\n===================================" << std::endl;
     std::cout << "          FINAL SCORE REPORT         " << std::endl;
     std::cout << "===================================" << std::endl;
-    std::cout << "Black Territory: " << black_territory << " + Captures: " << black_captures << std::endl;
-    std::cout << "White Territory: " << white_territory << " + Captures: " << white_captures << " + Komi: " << komi << std::endl;
-    std::cout << "Final Black Score: " << black_final_score << std::endl;
-    std::cout << "Final White Score: " << white_final_score << std::endl;
-
+    std::cout << "Black: Territory(" << black_territory << ") + Captures(" << black_captures << ") = " << black_final_score << std::endl;
+    std::cout << "White: Territory(" << white_territory << ") + Captures(" << white_captures << ") + Komi(" << komi << ") = " << white_final_score << std::endl;
+    
     if (black_final_score > white_final_score) {
-        std::cout << "Winner: BLACK (by " << black_final_score - white_final_score << " points)" << std::endl;
+        std::cout << "Winner: BLACK (+" << black_final_score - white_final_score << ")" << std::endl;
     } else if (white_final_score > black_final_score) {
-        std::cout << "Winner: WHITE (by " << white_final_score - black_final_score << " points)" << std::endl;
+        std::cout << "Winner: WHITE (+" << white_final_score - black_final_score << ")" << std::endl;
     } else {
-        std::cout << "Tied! (Draw)" << std::endl;
+        std::cout << "Draw!" << std::endl;
     }
+
     return {black_final_score, white_final_score};
 }
 

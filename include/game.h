@@ -24,7 +24,7 @@ private:
     int findGroupIndex(int x, int y);
     int calcLiberties(int x);
     bool valid(int x, int y) const;
-    PieceColor getTerritoryOwner(int x, int y, std::set<int>& visited) const;
+    PieceColor getTerritoryOwner(int x, int y, int& territory_size, std::vector<std::vector<bool>>& visited) const;
 //UI NEEDED 
     int  m_lastCaptures     = 0;
     bool m_lastInvalid      = false;  // invalid because occupied/OOB
