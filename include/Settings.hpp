@@ -16,15 +16,17 @@ private:
     sf::Text m_musicLabel;
     sf::Text m_musicValue;
     sf::Text m_backText;
-
+    sf::Text m_themeLabel;
+    sf::Text m_themeValue;
     sf::RectangleShape m_musicBox;
     sf::RectangleShape m_backBox;
-
+    sf::RectangleShape m_themeBox;
     bool m_musicHovered;
     bool m_backHovered;
+    bool m_themeHovered = false;
 
 public:
-    SettingsState(std::shared_ptr<Context>& context);
+    SettingsState(std::shared_ptr<Context> &context);
     ~SettingsState() override;
 
     void Init() override;

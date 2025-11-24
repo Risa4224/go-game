@@ -24,6 +24,17 @@ void MainBoard::Init()
     m_boardTopLeft.x = (winSizeF.x - m_boardPixelSize) * 0.5f;
     m_boardTopLeft.y = (winSizeF.y - m_boardPixelSize) * 0.5f;
     m_boardBackground.setPosition(m_boardTopLeft);
+    m_hasClassicTexture = m_boardTextureClassic.loadFromFile("assets/texture/light-wood.jpg");
+    if (!m_hasClassicTexture)
+    {
+        std::cout << "[MainBoard] Warning: could not load assets/board_classic.png\n";
+    }
+
+    m_hasDarkTexture = m_boardTextureDark.loadFromFile("assets/texture/dark-stone.jpg");
+    if (!m_hasDarkTexture)
+    {
+        std::cout << "[MainBoard] Warning: could not load assets/board_dark.png\n";
+    }
 
     m_cellSize = m_boardPixelSize / static_cast<float>(m_boardSize - 1);
 
@@ -403,6 +414,44 @@ void MainBoard::Update(sf::Time)
 
 void MainBoard::Draw()
 {
+    sf::Color boardColor;
+    sf::Color gridColor;
+
+    switch (m_context->m_boardTheme)
+    {
+    case BoardTheme::Classic:
+        boardColor = sf::Color(210, 164, 80);    // light wood fallback
+        gridColor  = sf::Color::Black;
+        break;
+
+    case BoardTheme::Dark:
+        boardColor = sf::Color(40, 40, 40);      // dark matte fallback
+        gridColor  = sf::Color(200, 200, 200);   // light grid
+        break;
+    }
+
+    // Apply grid color
+    for (auto &v : m_gridLines)
+        v.color = gridColor;
+
+    // Apply texture if available; otherwise use flat color
+    if (m_context->m_boardTheme == BoardTheme::Classic && m_hasClassicTexture)
+    {
+        m_boardBackground.setTexture(&m_boardTextureClassic);
+        // optional: tint texture a bit
+        m_boardBackground.setFillColor(sf::Color::White);
+    }
+    else if (m_context->m_boardTheme == BoardTheme::Dark && m_hasDarkTexture)
+    {
+        m_boardBackground.setTexture(&m_boardTextureDark);
+        m_boardBackground.setFillColor(sf::Color::White);
+    }
+    else
+    {
+        // No texture available → flat color
+        m_boardBackground.setTexture(nullptr);
+        m_boardBackground.setFillColor(boardColor);
+    }
 
     m_context->m_window->draw(m_boardBackground);
 
