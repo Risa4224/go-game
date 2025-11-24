@@ -1,5 +1,6 @@
 #include "AssetMan.hpp"
 #include <iostream>
+#include <SFML/Audio/SoundBuffer.hpp> 
 Engine::AssetMan::AssetMan()
 {
 }
@@ -38,3 +39,22 @@ const sf::Font &Engine::AssetMan::GetFont(int id) const
 {
     return *(m_fonts.at(id).get());
 }   
+
+void Engine::AssetMan::AddSoundBuffer(int id, const std::string &filePath)
+{
+    auto buffer = std::make_unique<sf::SoundBuffer>();
+
+    if (buffer->loadFromFile(filePath))
+    {
+        m_soundBuffers[id] = std::move(buffer);
+    }
+    else
+    {
+        std::cerr << "[AssetMan] Failed to load sound: " << filePath << '\n';
+    }
+}
+
+const sf::SoundBuffer &Engine::AssetMan::GetSoundBuffer(int id) const
+{
+    return *(m_soundBuffers.at(id).get());
+}

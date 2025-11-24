@@ -3,7 +3,7 @@
 #include <iostream>
 #include "PauseState.hpp"
 MainBoard::MainBoard(std::shared_ptr<Context> &context)
-    : m_context(context), m_boardBackground(), m_gridLines(), m_boardPixelSize(650.f), m_boardSize(19), m_cellSize(0.f), m_boardTopLeft(0.f, 0.f), m_stones(), m_undoButtonBox(), m_redoButtonBox(), m_undoHovered(false), m_redoHovered(false), m_saveHovered(false), m_loadHovered(false), m_game(std::make_unique<Game>(new Board()))
+    : m_context(context), m_boardBackground(), m_gridLines(), m_boardPixelSize(650.f), m_boardSize(19), m_cellSize(0.f), m_boardTopLeft(0.f, 0.f), m_stones(), m_undoButtonBox(), m_redoButtonBox(), m_undoHovered(false), m_redoHovered(false), m_saveHovered(false), m_loadHovered(false), m_game(std::make_unique<Game>(new Board())) ,m_placeSound(m_context->m_assets->GetSoundBuffer(STONEPLACE_SOUND)),m_passSound(m_context->m_assets->GetSoundBuffer(PASS_SOUND)),m_invalidSound(m_context->m_assets->GetSoundBuffer(INVALID_SOUND)),m_winSound(m_context->m_assets->GetSoundBuffer(WIN_SOUND))
 {
     std::cout << "[MainBoard] ctor\n";
 }
@@ -186,6 +186,7 @@ void MainBoard::handleLeftClick(const sf::Vector2i &pixelPos)
     bool ok = m_game->placeStone(ix, iy);
     if (ok)
     {
+        m_placeSound.play();
         rebuildStonesFromGame();
 
         int caps = m_game->getLastCaptures();
@@ -217,6 +218,7 @@ void MainBoard::handleLeftClick(const sf::Vector2i &pixelPos)
     }
     else
     {
+        m_invalidSound.play();
         std::string msg;
         if (m_game->lastMoveWasKoViolation())
             msg = "Invalid move: Ko rule violation. You cannot immediately retake.";
@@ -274,6 +276,7 @@ void MainBoard::ProcessInput()
                 if (m_game)
                 {
                     bool finished = m_game->pass();
+                    m_passSound.play();
                     rebuildStonesFromGame();
                     if (finished)
                     {
@@ -355,6 +358,7 @@ void MainBoard::ProcessInput()
                 {
                     if (m_game)
                     {
+                        m_passSound.play();
                         bool finished = m_game->pass();
                         rebuildStonesFromGame();
                         if (finished)
@@ -383,6 +387,7 @@ void MainBoard::ProcessInput()
                                 msg = "It's a draw!\nBoth players: " + std::to_string(blackScore);
                             }
                             setNotification(msg); // NEW
+                            m_winSound.play();
                             m_context->m_states->Add(
                                 std::make_unique<PauseState>(
                                     m_context,

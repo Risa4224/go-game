@@ -24,7 +24,14 @@ GameApp::GameApp()
     {
         m_context->m_musicEnabled = false;
     }
+    {
+        auto &assets = *m_context->m_assets;
 
+        assets.AddSoundBuffer(STONEPLACE_SOUND, "assets/sfx/stone_place.mp3");
+        assets.AddSoundBuffer(PASS_SOUND,       "assets/sfx/pass.wav");
+        assets.AddSoundBuffer(INVALID_SOUND,    "assets/sfx/invalid.mp3");
+        assets.AddSoundBuffer(WIN_SOUND,        "assets/sfx/win.mp3");
+    }
     m_context->m_states->Add(std::make_unique<MainMenu>(m_context), false);
 }
 

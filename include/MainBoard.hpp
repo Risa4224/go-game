@@ -11,6 +11,8 @@
 #include <SFML/Graphics/Vertex.hpp>
 #include <SFML/Graphics/CircleShape.hpp>
 #include <SFML/Graphics/Text.hpp>
+#include <SFML/Audio/Sound.hpp>
+#include <SFML/Audio/SoundBuffer.hpp>
 
 class MainBoard : public Engine::State
 {
@@ -49,13 +51,18 @@ private:
     bool m_showNotification = false;
     float m_notificationDuration = 3.f; // seconds
 
-    void setNotification(const std::string& msg);
+    void setNotification(const std::string &msg);
     std::unique_ptr<Game> m_game;
 
     void buildGrid();
     void rebuildStonesFromGame();
     void handleLeftClick(const sf::Vector2i &pixelPos);
     void resetGame();
+    // Sound effects
+    sf::Sound m_placeSound;
+    sf::Sound m_passSound;
+    sf::Sound m_invalidSound;
+    sf::Sound m_winSound;
 
 public:
     MainBoard(std::shared_ptr<Context> &context);

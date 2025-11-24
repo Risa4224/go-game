@@ -11,6 +11,10 @@
 enum AssetID
 {
     MAIN_FONT = 0,
+    STONEPLACE_SOUND = 1,
+    PASS_SOUND = 2,
+    INVALID_SOUND = 3,
+    WIN_SOUND = 4
 };
 
 // Chế độ chơi

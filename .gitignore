@@ -41,7 +41,7 @@ Makefile
 # IDE / EDITOR FILES
 ############################################
 .vs/
-# .vscode/        # keep this only if you want to share workspace settings
+.vscode/        # keep this only if you want to share workspace settings
 
 # Visual Studio / CMake Tools metadata
 *.pdb
