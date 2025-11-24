@@ -25,6 +25,12 @@ private:
     int calcLiberties(int x);
     bool valid(int x, int y) const;
     PieceColor getTerritoryOwner(int x, int y, std::set<int>& visited) const;
+//UI NEEDED 
+    int  m_lastCaptures     = 0;
+    bool m_lastInvalid      = false;  // invalid because occupied/OOB
+    bool m_lastSuicide      = false;
+    bool m_lastKoViolation  = false;
+    bool m_lastKoThreat     = false;  // simple heuristic: capture=1
 public:
     ~Game();
     Game(const Game& other);
@@ -43,6 +49,14 @@ public:
     bool saveToFile(const std::string& filename) const;
     bool loadFromFile(const std::string& filename);
     void rebuildGroupsFromBoard();
+
+
+    //UI NEEDED
+    int  getLastCaptures() const        { return m_lastCaptures; }
+    bool lastMoveWasInvalid() const     { return m_lastInvalid; }
+    bool lastMoveWasSuicide() const     { return m_lastSuicide; }
+    bool lastMoveWasKoViolation() const { return m_lastKoViolation; }
+    bool lastMoveCreatedKoThreat() const{ return m_lastKoThreat; }
 };
 
 #endif
