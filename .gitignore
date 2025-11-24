@@ -2,6 +2,7 @@
 # BUILD ARTIFACTS
 ############################################
 build/
+# Folder bin chứa file exe sau khi build -> Không cần commit
 bin/
 out/
 
@@ -17,30 +18,24 @@ Makefile
 # Object files
 *.o
 *.obj
-*.txt
 
 # Executables
 *.exe
 
-# Shared libraries / runtime dlls
+############################################
+# LIBRARIES & DLLs
+############################################
+# Quy tắc chung: Bỏ qua tất cả file thư viện và file chạy động
 *.dll
 *.so
 *.dylib
+*.a
+*.lib
 
-############################################
-# SFML / MinGW runtime DLLs
-# (never commit these!)
-############################################
-sfml-audio-3.dll
-sfml-audio-d-3.dll
-sfml-graphics-3.dll
-sfml-graphics-d-3
-sfml-network-3.dll
-sfml-network-d-3.dll
-sfml-system-3.dll
-sfml-system-d-3.dll
-sfml-window-3.dll
-sfml-window-d-3.dll
+# === QUAN TRỌNG ===
+# NGOẠI LỆ: Cho phép track mọi thứ nằm trong folder "sfml/"
+# Dấu ! nghĩa là "Không bỏ qua"
+!sfml/**
 
 ############################################
 # IDE / EDITOR FILES
@@ -72,4 +67,5 @@ ipch/
 .DS_Store
 Thumbs.db
 
-savegame.txt
+# File save game (nếu muốn không commit thì để lại)
+savegame.txt    
