@@ -17,6 +17,7 @@ Makefile
 # Object files
 *.o
 *.obj
+*.txt
 
 # Executables
 *.exe
