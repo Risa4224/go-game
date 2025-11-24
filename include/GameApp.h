@@ -10,7 +10,7 @@
 // ID của asset (font, texture, v.v.)
 enum AssetID
 {
-    MAIN_FONT = 0
+    MAIN_FONT = 0,
 };
 
 // Chế độ chơi
@@ -19,7 +19,11 @@ enum class GameMode
     TwoPlayers,
     AiVsPlayer
 };
-
+enum class BoardTheme
+{
+    Classic,
+    Dark
+};
 // Ngữ cảnh dùng chung cho mọi State
 struct Context
 {
@@ -31,6 +35,7 @@ struct Context
     bool      m_musicEnabled;
     GameMode  m_gameMode;
     bool m_requestBoardRestart = false;
+    BoardTheme m_boardTheme = BoardTheme::Classic;
     Context()
     {
         m_assets       = std::make_unique<Engine::AssetMan>();

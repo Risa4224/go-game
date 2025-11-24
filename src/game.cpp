@@ -199,8 +199,16 @@ bool Game::ended(int x, int y){
 }
 
 bool Game::placeStone(int x, int y) {
+    // --- reset last-move info ---
+    m_lastCaptures    = 0;
+    m_lastInvalid     = false;
+    m_lastSuicide     = false;
+    m_lastKoViolation = false;
+    m_lastKoThreat    = false;
+
     if(!valid(x, y)){
         std::cout << "Invalid move: spot already occupied or out of bounds." << endl;
+        m_lastInvalid = true;
         return false;
     }
     
@@ -229,16 +237,27 @@ bool Game::placeStone(int x, int y) {
     }
 
     if(is_suicide || is_ko_violation) {
-        
+        // restore
         groups = groups_backup;         
         *board = temp_board_backup; 
                 
-        if (is_suicide) std::cout << "Invalid move: Suicide." << endl;
-        if (is_ko_violation) std::cout << "Invalid move: Ko Rule violation." << endl;
+        if (is_suicide) {
+            std::cout << "Invalid move: Suicide." << endl;
+            m_lastSuicide = true;
+        }
+        if (is_ko_violation) {
+            std::cout << "Invalid move: Ko Rule violation." << endl;
+            m_lastKoViolation = true;
+        }
         
         return false; 
     }
     
+    // --- move is valid: record info for UI ---
+    m_lastCaptures = captures;
+    // Very simple heuristic: capture exactly 1 stone often = Ko shape
+    m_lastKoThreat = (captures == 1);
+
     Game state_to_save = *this;
 
     *(state_to_save.board) = temp_board_backup; 
@@ -258,6 +277,7 @@ bool Game::placeStone(int x, int y) {
     consecutive_passes = 0; 
     return true;
 }
+
 
 // Debug function
 void Game::printDebug() const {

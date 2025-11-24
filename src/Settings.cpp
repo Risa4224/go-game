@@ -3,10 +3,12 @@
 #include <SFML/Audio/SoundSource.hpp>
 
 SettingsState::SettingsState(std::shared_ptr<Context> &context)
-    : m_context{context}, m_titleText(m_context->m_assets->GetFont(MAIN_FONT), "Settings", 60), m_musicLabel(m_context->m_assets->GetFont(MAIN_FONT), "Music:", 40), m_musicValue(m_context->m_assets->GetFont(MAIN_FONT), "On", 40), m_backText(m_context->m_assets->GetFont(MAIN_FONT), "Back", 36), m_musicHovered(false), m_backHovered(false)
+    : m_context{context}, m_titleText(m_context->m_assets->GetFont(MAIN_FONT), "Settings", 60), m_musicLabel(m_context->m_assets->GetFont(MAIN_FONT), "Music:", 40), m_musicValue(m_context->m_assets->GetFont(MAIN_FONT), "On", 40), m_backText(m_context->m_assets->GetFont(MAIN_FONT), "Back", 36), m_themeLabel(m_context->m_assets->GetFont(MAIN_FONT), "Theme:", 40),
+      m_themeValue(m_context->m_assets->GetFont(MAIN_FONT), "Classic", 40), m_musicHovered(false), m_backHovered(false)
 {
     m_musicBox.setSize({300.f, 80.f});
     m_backBox.setSize({200.f, 60.f});
+    m_themeBox.setSize({300.f, 80.f});
 }
 
 SettingsState::~SettingsState() = default;
@@ -37,11 +39,26 @@ void SettingsState::Init()
         m_musicValue.setOrigin(vb.getCenter());
         m_musicValue.setPosition({cx + 80.f, cy - 20.f});
     }
+    {
+        auto b = m_themeBox.getLocalBounds();
+        m_themeBox.setOrigin(b.getCenter());
+        // put theme row under Music
+        m_themeBox.setPosition({cx, cy + 80.f});
+        m_themeBox.setFillColor(sf::Color(200, 200, 200));
+
+        auto lb = m_themeLabel.getLocalBounds();
+        m_themeLabel.setOrigin(lb.getCenter());
+        m_themeLabel.setPosition({cx - 80.f, cy + 80.f});
+
+        auto vb = m_themeValue.getLocalBounds();
+        m_themeValue.setOrigin(vb.getCenter());
+        m_themeValue.setPosition({cx + 80.f, cy + 80.f});
+    }
 
     {
         auto b = m_backBox.getLocalBounds();
         m_backBox.setOrigin(b.getCenter());
-        m_backBox.setPosition({cx, cy + 120.f});
+        m_backBox.setPosition({cx, cy + 180.f});
         m_backBox.setFillColor(sf::Color(200, 200, 200));
 
         auto tb = m_backText.getLocalBounds();
@@ -53,6 +70,10 @@ void SettingsState::Init()
         m_musicValue.setString("On");
     else
         m_musicValue.setString("Off");
+    if (m_context->m_boardTheme == BoardTheme::Classic)
+        m_themeValue.setString("Classic");
+    else
+        m_themeValue.setString("Dark");
 }
 
 void SettingsState::ProcessInput()
@@ -79,9 +100,10 @@ void SettingsState::ProcessInput()
 
             auto musicBounds = m_musicBox.getGlobalBounds();
             auto backBounds = m_backBox.getGlobalBounds();
-
+            auto themeBounds = m_themeBox.getGlobalBounds();
             m_musicHovered = musicBounds.contains(mousePos);
             m_backHovered = backBounds.contains(mousePos);
+            m_themeHovered = themeBounds.contains(mousePos);
         }
         else if (const auto *mouseBtn = event->getIf<sf::Event::MouseButtonPressed>())
         {
@@ -93,7 +115,7 @@ void SettingsState::ProcessInput()
 
                 auto musicBounds = m_musicBox.getGlobalBounds();
                 auto backBounds = m_backBox.getGlobalBounds();
-
+                auto themeBounds = m_themeBox.getGlobalBounds();
                 if (musicBounds.contains(mousePos))
                 {
 
@@ -118,6 +140,19 @@ void SettingsState::ProcessInput()
                     else
                         m_musicValue.setString("Off");
                 }
+                else if (themeBounds.contains(mousePos))
+                {
+                    // Toggle board theme
+                    if (m_context->m_boardTheme == BoardTheme::Classic)
+                        m_context->m_boardTheme = BoardTheme::Dark;
+                    else
+                        m_context->m_boardTheme = BoardTheme::Classic;
+
+                    if (m_context->m_boardTheme == BoardTheme::Classic)
+                        m_themeValue.setString("Classic");
+                    else
+                        m_themeValue.setString("Dark");
+                }
                 else if (backBounds.contains(mousePos))
                 {
 
@@ -135,7 +170,10 @@ void SettingsState::Update(sf::Time)
         m_musicBox.setFillColor(sf::Color(230, 230, 230));
     else
         m_musicBox.setFillColor(sf::Color(200, 200, 200));
-
+    if (m_themeHovered)
+        m_themeBox.setFillColor(sf::Color(230, 230, 230));
+    else
+        m_themeBox.setFillColor(sf::Color(200, 200, 200));
     if (m_backHovered)
         m_backBox.setFillColor(sf::Color(230, 230, 230));
     else
@@ -151,4 +189,7 @@ void SettingsState::Draw()
     m_context->m_window->draw(m_musicLabel);
     m_context->m_window->draw(m_musicValue);
     m_context->m_window->draw(m_backText);
+    m_context->m_window->draw(m_themeBox);
+    m_context->m_window->draw(m_themeLabel);
+    m_context->m_window->draw(m_themeValue);
 }

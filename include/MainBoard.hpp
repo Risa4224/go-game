@@ -38,6 +38,18 @@ private:
     bool m_pauseHovered;
     bool m_saveHovered;
     bool m_loadHovered;
+
+    sf::Texture m_boardTextureClassic;
+    sf::Texture m_boardTextureDark;
+    bool m_hasClassicTexture = false;
+    bool m_hasDarkTexture = false;
+
+    std::string m_notificationText;
+    sf::Clock m_notificationClock;
+    bool m_showNotification = false;
+    float m_notificationDuration = 3.f; // seconds
+
+    void setNotification(const std::string& msg);
     std::unique_ptr<Game> m_game;
 
     void buildGrid();

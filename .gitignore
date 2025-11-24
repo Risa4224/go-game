@@ -71,3 +71,5 @@ ipch/
 ############################################
 .DS_Store
 Thumbs.db
+
+savegame.txt

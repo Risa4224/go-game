@@ -14,7 +14,6 @@ GameApp::GameApp()
     m_context->m_assets->AddFont(
         MAIN_FONT,
         "assets/fonts/Roboto-VariableFont_wdth,wght.ttf");
-
     if (m_context->m_music->openFromFile("assets/audio/background.mp3"))
     {
         m_context->m_music->setVolume(100.f);
@@ -56,7 +55,7 @@ void GameApp::Run()
         if (stack.empty())
             continue;
 
-        m_context->m_window->clear(sf::Color(30, 30, 30));
+        m_context->m_window->clear(sf::Color(120, 180, 120));
 
         int startIndex = static_cast<int>(stack.size()) - 1;
         while (startIndex > 0 && stack[startIndex]->AllowDrawBelow())

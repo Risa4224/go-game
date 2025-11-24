@@ -24,6 +24,17 @@ void MainBoard::Init()
     m_boardTopLeft.x = (winSizeF.x - m_boardPixelSize) * 0.5f;
     m_boardTopLeft.y = (winSizeF.y - m_boardPixelSize) * 0.5f;
     m_boardBackground.setPosition(m_boardTopLeft);
+    m_hasClassicTexture = m_boardTextureClassic.loadFromFile("assets/texture/light-wood.jpg");
+    if (!m_hasClassicTexture)
+    {
+        std::cout << "[MainBoard] Warning: could not load assets/board_classic.png\n";
+    }
+
+    m_hasDarkTexture = m_boardTextureDark.loadFromFile("assets/texture/dark-stone.jpg");
+    if (!m_hasDarkTexture)
+    {
+        std::cout << "[MainBoard] Warning: could not load assets/board_dark.png\n";
+    }
 
     m_cellSize = m_boardPixelSize / static_cast<float>(m_boardSize - 1);
 
@@ -59,6 +70,13 @@ void MainBoard::Init()
     rebuildStonesFromGame();
 
     std::cout << "[MainBoard] Init END\n";
+}
+
+void MainBoard::setNotification(const std::string &msg)
+{
+    m_notificationText = msg;
+    m_showNotification = !msg.empty();
+    m_notificationClock.restart();
 }
 
 void MainBoard::buildGrid()
@@ -169,9 +187,48 @@ void MainBoard::handleLeftClick(const sf::Vector2i &pixelPos)
     if (ok)
     {
         rebuildStonesFromGame();
+
+        int caps = m_game->getLastCaptures();
+
+        // Player who just played = opposite of current turn
+        PieceColor now = m_game->getTurn();
+        PieceColor played = (now == BLACK ? WHITE : (now == WHITE ? BLACK : NONE));
+
+        std::string playerName = (played == BLACK ? "Black" : played == WHITE ? "White"
+                                                                              : "Player");
+
+        std::string msg;
+
+        if (caps > 0)
+        {
+            msg = playerName + " captured " + std::to_string(caps) +
+                  (caps == 1 ? " stone." : " stones.");
+        }
+
+        if (m_game->lastMoveCreatedKoThreat())
+        {
+            if (!msg.empty())
+                msg += " ";
+            msg += "Ko threat: immediate recapture is forbidden.";
+        }
+
+        if (!msg.empty())
+            setNotification(msg);
     }
     else
     {
+        std::string msg;
+        if (m_game->lastMoveWasKoViolation())
+            msg = "Invalid move: Ko rule violation. You cannot immediately retake.";
+        else if (m_game->lastMoveWasSuicide())
+            msg = "Invalid move: Suicide moves are not allowed.";
+        else if (m_game->lastMoveWasInvalid())
+            msg = "Invalid move: position out of bounds or already occupied.";
+        else
+            msg = "Invalid move.";
+
+        setNotification(msg);
+
         std::cout << "[MainBoard] Invalid move at (" << ix << ", " << iy << ")\n";
     }
 }
@@ -243,7 +300,7 @@ void MainBoard::ProcessInput()
                         {
                             msg = "It's a draw!\nBoth players: " + std::to_string(blackScore);
                         }
-
+                        setNotification(msg); // NEW
                         m_context->m_states->Add(
                             std::make_unique<PauseState>(
                                 m_context,
@@ -325,7 +382,7 @@ void MainBoard::ProcessInput()
                             {
                                 msg = "It's a draw!\nBoth players: " + std::to_string(blackScore);
                             }
-
+                            setNotification(msg); // NEW
                             m_context->m_states->Add(
                                 std::make_unique<PauseState>(
                                     m_context,
@@ -399,10 +456,58 @@ void MainBoard::Update(sf::Time)
     m_pauseButtonBox.setFillColor(m_pauseHovered ? hoverColor : normalColor);
     m_saveButtonBox.setFillColor(m_saveHovered ? hoverColor : normalColor);
     m_loadButtonBox.setFillColor(m_loadHovered ? hoverColor : normalColor);
+
+    if (m_showNotification)
+    {
+        float elapsed = m_notificationClock.getElapsedTime().asSeconds();
+        if (elapsed > m_notificationDuration)
+        {
+            m_showNotification = false;
+            m_notificationText.clear();
+        }
+    }
 }
 
 void MainBoard::Draw()
 {
+    sf::Color boardColor;
+    sf::Color gridColor;
+
+    switch (m_context->m_boardTheme)
+    {
+    case BoardTheme::Classic:
+        boardColor = sf::Color(210, 164, 80); // light wood fallback
+        gridColor = sf::Color::Black;
+        break;
+
+    case BoardTheme::Dark:
+        boardColor = sf::Color(40, 40, 40);   // dark matte fallback
+        gridColor = sf::Color(200, 200, 200); // light grid
+        break;
+    }
+
+    // Apply grid color
+    for (auto &v : m_gridLines)
+        v.color = gridColor;
+
+    // Apply texture if available; otherwise use flat color
+    if (m_context->m_boardTheme == BoardTheme::Classic && m_hasClassicTexture)
+    {
+        m_boardBackground.setTexture(&m_boardTextureClassic);
+        // optional: tint texture a bit
+        m_boardBackground.setFillColor(sf::Color::White);
+    }
+    else if (m_context->m_boardTheme == BoardTheme::Dark && m_hasDarkTexture)
+    {
+        m_boardBackground.setTexture(&m_boardTextureDark);
+        m_boardBackground.setFillColor(sf::Color::White);
+    }
+    else
+    {
+        // No texture available → flat color
+        m_boardBackground.setTexture(nullptr);
+        m_boardBackground.setFillColor(boardColor);
+    }
 
     m_context->m_window->draw(m_boardBackground);
 
@@ -523,6 +628,33 @@ void MainBoard::Draw()
             font,
             "ESC: Back | Click board to place stone | Z: Undo / Y: Redo / P: Pass",
             16);
+        // Notification bar (if any)
+        if (m_showNotification && !m_notificationText.empty())
+        {
+            sf::RectangleShape notifBar;
+            notifBar.setSize({static_cast<float>(winSize.x), 24.f});
+            notifBar.setPosition(
+                {0.f, static_cast<float>(winSize.y) - 30.f - notifBar.getSize().y});
+            // 30.f = height of bottomBar
+
+            notifBar.setFillColor(sf::Color(50, 50, 50, 230));
+            notifBar.setOutlineThickness(1.f);
+            notifBar.setOutlineColor(sf::Color(200, 200, 0, 180)); // yellow-ish
+
+            m_context->m_window->draw(notifBar);
+
+            sf::Text notifText(font, m_notificationText, 16);
+            notifText.setFillColor(sf::Color(255, 255, 180));
+            notifText.setStyle(sf::Text::Bold);
+
+            auto nb = notifText.getLocalBounds();
+            notifText.setOrigin({nb.position.x, nb.position.y});
+            notifText.setPosition({10.f,
+                                   static_cast<float>(winSize.y) - 30.f - notifBar.getSize().y + 4.f});
+
+            m_context->m_window->draw(notifText);
+        }
+
         hint.setFillColor(sf::Color::White);
         hint.setStyle(sf::Text::Bold);
 
