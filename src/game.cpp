@@ -43,6 +43,12 @@ PieceColor Game::oppositeColor(PieceColor input) const {
     else return NONE;
 }
 
+PieceColor Game::getPiece(int x, int y) const {
+    return board->getPiece(x, y);
+}
+
+
+
 bool Game::valid(int x, int y) const{
     if(x < 0 || x >= 19 || y < 0 || y >= 19) return false;
     //std::cout << "Checking validity for (" << x << ", " << y << "): ";

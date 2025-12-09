@@ -17,7 +17,6 @@ private:
     std::vector<PieceGroup> groups; // Dữ liệu logic game
     std::vector<Game> history; // Lưu lịch sử để kiểm tra KO
     std::vector<Game> future;  // Lưu lịch sử tương lai để hỗ trợ redo
-    PieceColor oppositeColor(PieceColor input) const;
     void processGroups(int x, int y, PieceColor c);
     int checkCaptures(int x, int y, PieceColor c);
     void removeGroup(int x, int y, int &a);
@@ -37,6 +36,8 @@ public:
     Game& operator=(const Game& other);
     Game(Board* b); 
     PieceColor getTurn() const { return turn; }
+    PieceColor getPiece(int x, int y) const;
+    PieceColor oppositeColor(PieceColor input) const;
     Board* getBoard() const { return board; }
     bool placeStone(int x, int y); 
     bool ended(int x, int y);
