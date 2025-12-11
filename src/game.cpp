@@ -1,9 +1,14 @@
-// game.cpp (FILE MỚI)
 #include "game.h"
 #include <iostream>
 #include <cmath> 
 #include <fstream>
 #include <queue>
+#include <filesystem>
+#include <sstream>
+#include <iomanip>
+#include <algorithm>
+
+namespace fs = std::filesystem;
 
 using namespace std;
 
@@ -626,20 +631,17 @@ bool Game::loadFromFile(const std::string& filename)
         }
     }
 
-    // Rebuild groups cho trạng thái hiện tại
     rebuildGroupsFromBoard();
     turn = static_cast<PieceColor>(turnInt);
 
-    // 2) Đọc history
     std::size_t historySize = 0;
     if (!(in >> historySize))
     {
-        // Không đọc được size => coi như không có history
         history.clear();
         future.clear();
         return true;
     }
-    std::getline(in, line); // ăn newline
+    std::getline(in, line); 
 
     history.clear();
     history.reserve(historySize);
@@ -653,9 +655,7 @@ bool Game::loadFromFile(const std::string& filename)
             std::cerr << "Invalid history metadata in save file.\n";
             return false;
         }
-        std::getline(in, line); // newline
-
-        // Tạo board snapshot từ current board (copy), sau đó overwrite toàn bộ
+        std::getline(in, line);
         Board* snapBoard = new Board(*board);
 
         for (int y = 0; y < boardSize; ++y)
@@ -691,11 +691,9 @@ bool Game::loadFromFile(const std::string& filename)
         history.push_back(snapshot);
     }
 
-    // 3) Đọc future
     std::size_t futureSize = 0;
     if (!(in >> futureSize))
     {
-        // Nếu không đọc được, coi như không có future
         future.clear();
         return true;
     }
@@ -752,6 +750,97 @@ bool Game::loadFromFile(const std::string& filename)
 
     in.close();
     return true;
+}
+
+bool Game::saveNamed(const std::string& name) const
+{
+    std::error_code ec;
+
+    fs::path dir(Game::SAVE_DIR);
+    fs::create_directories(dir, ec); 
+
+    fs::path path = dir / name;
+    if (!path.has_extension()) {
+        path.replace_extension(".go");
+    }
+
+    return saveToFile(path.string());
+}
+
+bool Game::loadNamed(const std::string& name)
+{
+    fs::path path(Game::SAVE_DIR);
+    path /= name;
+    if (!path.has_extension()) {
+        path.replace_extension(".go");
+    }
+
+    return loadFromFile(path.string());
+}
+
+bool Game::saveToNewSlot(std::string& outFilename) const
+{
+    std::error_code ec;
+    fs::path dir(Game::SAVE_DIR);
+    fs::create_directories(dir, ec);
+
+    int maxIndex = 0;
+
+    for (const auto& entry : fs::directory_iterator(dir, ec)) {
+        if (!entry.is_regular_file()) continue;
+
+        std::string stem = entry.path().stem().string(); // ví dụ "save_001"
+        if (stem.rfind("save_", 0) == 0) {               // bắt đầu bằng "save_"
+            std::string numStr = stem.substr(5);         // phần sau "save_"
+            try {
+                int idx = std::stoi(numStr);
+                if (idx > maxIndex) maxIndex = idx;
+            } catch (...) {
+                // tên file không theo dạng save_X => bỏ qua
+            }
+        }
+    }
+
+    int newIndex = maxIndex + 1;
+
+    std::ostringstream oss;
+    oss << "save_" << std::setfill('0') << std::setw(3) << newIndex; 
+
+    fs::path path = dir / (oss.str() + ".go");
+
+    outFilename = path.filename().string();
+
+    if (!saveToFile(path.string())) {
+        outFilename.clear();
+        return false;
+    }
+
+    return true;
+}
+
+std::vector<std::string> Game::listSaveFiles()
+{
+    std::vector<std::string> result;
+
+    std::error_code ec;
+    fs::path dir(Game::SAVE_DIR);
+
+    if (!fs::exists(dir, ec) || !fs::is_directory(dir, ec)) {
+        return result;
+    }
+
+    for (const auto& entry : fs::directory_iterator(dir, ec)) {
+        if (!entry.is_regular_file()) continue;
+
+        std::string ext = entry.path().extension().string();
+        // Lọc theo extension bạn dùng cho save
+        if (ext == ".go" || ext == ".txt" || ext == ".sav") {
+            result.push_back(entry.path().filename().string());
+        }
+    }
+
+    std::sort(result.begin(), result.end());
+    return result;
 }
 
 void Game::rebuildGroupsFromBoard()

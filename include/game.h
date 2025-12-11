@@ -24,12 +24,11 @@ private:
     int calcLiberties(int x);
     bool valid(int x, int y) const;
     PieceColor getTerritoryOwner(int x, int y, int& territory_size, std::vector<std::vector<bool>>& visited) const;
-//UI NEEDED 
     int  m_lastCaptures     = 0;
-    bool m_lastInvalid      = false;  // invalid because occupied/OOB
+    bool m_lastInvalid      = false;  
     bool m_lastSuicide      = false;
     bool m_lastKoViolation  = false;
-    bool m_lastKoThreat     = false;  // simple heuristic: capture=1
+    bool m_lastKoThreat     = false; 
 public:
     ~Game();
     Game(const Game& other);
@@ -50,14 +49,16 @@ public:
     bool saveToFile(const std::string& filename) const;
     bool loadFromFile(const std::string& filename);
     void rebuildGroupsFromBoard();
-
-
-    //UI NEEDED
     int  getLastCaptures() const        { return m_lastCaptures; }
     bool lastMoveWasInvalid() const     { return m_lastInvalid; }
     bool lastMoveWasSuicide() const     { return m_lastSuicide; }
     bool lastMoveWasKoViolation() const { return m_lastKoViolation; }
     bool lastMoveCreatedKoThreat() const{ return m_lastKoThreat; }
+    static inline const std::string SAVE_DIR = "saved_game";
+    bool saveNamed(const std::string& name) const;
+    bool saveToNewSlot(std::string& outFilename) const;
+    static std::vector<std::string> listSaveFiles();
+    bool loadNamed(const std::string& name);
 };
 
 #endif
