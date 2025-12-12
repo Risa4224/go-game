@@ -33,6 +33,9 @@ Game::Game(const Game& other)
       groupAt(other.groupAt),
       // history & future intentionally NOT copied (snapshots)
       m_enableHistory(false),
+      m_koRefBoard(other.m_koRefBoard),
+      m_hasKoRef(other.m_hasKoRef),
+      m_deadMark(other.m_deadMark),
       m_lastCaptures(other.m_lastCaptures),
       m_lastInvalid(other.m_lastInvalid),
       m_lastSuicide(other.m_lastSuicide),
@@ -52,6 +55,9 @@ Game& Game::operator=(const Game& other) {
     turn = other.turn;
     groups = other.groups;
     groupAt = other.groupAt;
+    m_koRefBoard = other.m_koRefBoard;
+    m_hasKoRef = other.m_hasKoRef;
+    m_deadMark = other.m_deadMark;
 
     // IMPORTANT: keep this->m_enableHistory unchanged (main game must keep recording)
     // history/future are not copied by design
@@ -67,6 +73,9 @@ Game::Game(Board* b)
     : board(b), turn(BLACK)
 {
     groupAt.fill(-1);
+    m_deadMark.fill(0);
+    m_hasKoRef = false;
+    m_koRefBoard = *board;
     rebuildGroupsFromBoard(); // an toàn nếu board không rỗng
 }
 
@@ -81,10 +90,38 @@ bool Game::valid(int x, int y) const {
 }
 
 bool Game::checkKO() const {
-    // Simple ko: không được lặp lại vị trí của board trước đó (ngay trước lượt này).
-    if (history.empty()) return false;
-    return board->isEqual(*history.back().board);
+    // Simple ko (positional, 1-step): disallow a move that recreates the board position
+    // from two plies ago (i.e., the board position before the last move).
+    if (!m_hasKoRef) return false;
+    return board->isEqual(m_koRefBoard);
 }
+
+void Game::clearDeadMarks() {
+    m_deadMark.fill(0);
+}
+
+bool Game::isDeadAt(int x, int y) const {
+    if (!inBounds(x, y)) return false;
+    return m_deadMark[encodePos(x, y)] != 0;
+}
+
+bool Game::toggleDeadGroupAt(int x, int y) {
+    if (!inBounds(x, y)) return false;
+    PieceColor p = board->getPiece(x, y);
+    if (p == NONE) return false;
+
+    const int id = encodePos(x, y);
+    const int gidx = groupAt[id];
+    if (gidx < 0 || gidx >= (int)groups.size()) return false;
+
+    const auto& locs = groups[gidx].getLocations();
+    const std::uint8_t newVal = m_deadMark[id] ? 0 : 1;
+    for (int sid : locs) {
+        m_deadMark[sid] = newVal;
+    }
+    return true;
+}
+
 
 int Game::calcLiberties(int groupIdx) const {
     if (groupIdx < 0 || groupIdx >= (int)groups.size()) return 0;
@@ -244,6 +281,9 @@ bool Game::placeStone(int x, int y) {
 
     // backups for rollback
     const Board board_backup = *board;
+    const Board koRef_backup = m_koRefBoard;
+    const bool  hasKoRef_backup = m_hasKoRef;
+    const auto  deadMark_backup = m_deadMark;
     const auto groups_backup = groups;
     const auto groupAt_backup = groupAt;
     const int black_backup = black_captures;
@@ -256,7 +296,7 @@ bool Game::placeStone(int x, int y) {
     int captures = checkCapturesAround(x, y, current_color);
 
     const bool is_suicide = (captures == 0 && calcLiberties(placed_group) == 0);
-    const bool is_ko_violation = (m_enableHistory && !history.empty() && checkKO());
+    const bool is_ko_violation = checkKO();
 
     if (is_suicide || is_ko_violation) {
         // rollback
@@ -266,6 +306,9 @@ bool Game::placeStone(int x, int y) {
         black_captures = black_backup;
         white_captures = white_backup;
         consecutive_passes = passes_backup;
+        m_koRefBoard = koRef_backup;
+        m_hasKoRef = hasKoRef_backup;
+        m_deadMark = deadMark_backup;
 
         if (is_suicide) m_lastSuicide = true;
         if (is_ko_violation) m_lastKoViolation = true;
@@ -293,10 +336,17 @@ bool Game::placeStone(int x, int y) {
         snapshot.history.clear();
         snapshot.future.clear();
         snapshot.m_enableHistory = false;
+        snapshot.m_koRefBoard = koRef_backup;
+        snapshot.m_hasKoRef = hasKoRef_backup;
+        snapshot.m_deadMark = deadMark_backup;
 
         history.push_back(std::move(snapshot));
         future.clear();
     }
+
+    // update ko reference for the next player (board position before this move)
+    m_koRefBoard = board_backup;
+    m_hasKoRef = true;
 
     // next turn
     turn = oppositeColor(turn);
@@ -305,10 +355,22 @@ bool Game::placeStone(int x, int y) {
 }
 
 bool Game::pass() {
+    // reset last-move info
+    m_lastCaptures    = 0;
+    m_lastInvalid     = false;
+    m_lastSuicide     = false;
+    m_lastKoViolation = false;
+    m_lastKoThreat    = false;
+
     if (m_enableHistory) {
         history.push_back(*this); // snapshot (copy ctor disables history)
         future.clear();
     }
+
+    // A pass counts as a move for ko purposes under simple-ko:
+    // it advances the "two plies ago" reference.
+    m_koRefBoard = *board;
+    m_hasKoRef = true;
 
     ++consecutive_passes;
     if (consecutive_passes >= 2) {
@@ -388,30 +450,99 @@ PieceColor Game::getTerritoryOwner(int startX, int startY, int& territory_size, 
 }
 
 std::pair<float, float> Game::calculateFinalScore(float komi) const {
+    // Apply optional dead-stone removal on a temporary board for scoring.
+    Board scoringBoard = *board;
+    int black_caps = black_captures;
+    int white_caps = white_captures;
+
+    for (int y = 0; y < BOARD_SIZE; ++y) {
+        for (int x = 0; x < BOARD_SIZE; ++x) {
+            const int id = encodePos(x, y);
+            if (!m_deadMark[id]) continue;
+
+            PieceColor p = scoringBoard.getPiece(x, y);
+            if (p == BLACK) {
+                ++white_caps;
+                scoringBoard.setPiece(x, y, NONE);
+            } else if (p == WHITE) {
+                ++black_caps;
+                scoringBoard.setPiece(x, y, NONE);
+            }
+        }
+    }
+
     std::vector<std::uint8_t> visited(BOARD_CELLS, 0);
+
+    auto getOwner = [&](int startX, int startY, int& territory_size) -> PieceColor {
+        std::queue<int> q;
+        const int startId = encodePos(startX, startY);
+        q.push(startId);
+        visited[startId] = 1;
+
+        territory_size = 0;
+        bool touchesBlack = false;
+        bool touchesWhite = false;
+
+        static const int dx[4] = {-1, 1, 0, 0};
+        static const int dy[4] = {0, 0, -1, 1};
+
+        while (!q.empty()) {
+            int id = q.front();
+            q.pop();
+
+            const int x = decodeX(id);
+            const int y = decodeY(id);
+            ++territory_size;
+
+            for (int k = 0; k < 4; ++k) {
+                const int nx = x + dx[k];
+                const int ny = y + dy[k];
+                if (!inBounds(nx, ny)) continue;
+
+                PieceColor p = scoringBoard.getPiece(nx, ny);
+                if (p == NONE) {
+                    const int nid = encodePos(nx, ny);
+                    if (!visited[nid]) {
+                        visited[nid] = 1;
+                        q.push(nid);
+                    }
+                } else if (p == BLACK) {
+                    touchesBlack = true;
+                } else if (p == WHITE) {
+                    touchesWhite = true;
+                }
+            }
+        }
+
+        if (touchesBlack && !touchesWhite) return BLACK;
+        if (touchesWhite && !touchesBlack) return WHITE;
+        return NONE;
+    };
 
     int black_territory = 0;
     int white_territory = 0;
 
-    for (int x = 0; x < BOARD_SIZE; ++x) {
-        for (int y = 0; y < BOARD_SIZE; ++y) {
-            if (board->getPiece(x, y) != NONE) continue;
+    for (int y = 0; y < BOARD_SIZE; ++y) {
+        for (int x = 0; x < BOARD_SIZE; ++x) {
+            if (scoringBoard.getPiece(x, y) != NONE) continue;
 
-            int id = encodePos(x, y);
+            const int id = encodePos(x, y);
             if (visited[id]) continue;
 
             int territory_size = 0;
-            PieceColor owner = getTerritoryOwner(x, y, territory_size, visited);
+            PieceColor owner = getOwner(x, y, territory_size);
 
             if (owner == BLACK) black_territory += territory_size;
             else if (owner == WHITE) white_territory += territory_size;
         }
     }
 
-    float black_score = static_cast<float>(black_territory + black_captures);
-    float white_score = static_cast<float>(white_territory + white_captures) + komi;
+    float black_score = static_cast<float>(black_territory + black_caps);
+    float white_score = static_cast<float>(white_territory + white_caps) + komi;
     return {black_score, white_score};
 }
+
+
 
 void Game::printDebug() const {
     std::cout << "--- GAME STATE ---\n";
@@ -511,6 +642,7 @@ bool Game::loadFromFile(const std::string& filename) {
     }
 
     rebuildGroupsFromBoard();
+    m_deadMark.fill(0);
 
     std::size_t historySize = 0;
     if (!(in >> historySize)) { history.clear(); future.clear(); return true; }
@@ -518,6 +650,8 @@ bool Game::loadFromFile(const std::string& filename) {
 
     history.clear();
     history.reserve(historySize);
+    Board lastPreMoveBoard;
+    bool hasLastPreMove = false;
 
     for (std::size_t i = 0; i < historySize; ++i) {
         int hTurnInt = 0, hBlack = 0, hWhite = 0, hPass = 0;
@@ -544,9 +678,19 @@ bool Game::loadFromFile(const std::string& filename) {
         snapshot.history.clear();
         snapshot.future.clear();
         snapshot.m_enableHistory = false;
+        snapshot.m_deadMark.fill(0);
+        if (hasLastPreMove) {
+            snapshot.m_koRefBoard = lastPreMoveBoard;
+            snapshot.m_hasKoRef = true;
+        } else {
+            snapshot.m_koRefBoard = *snapshot.board;
+            snapshot.m_hasKoRef = false;
+        }
         snapshot.rebuildGroupsFromBoard();
 
         history.push_back(std::move(snapshot));
+        lastPreMoveBoard = *history.back().board;
+        hasLastPreMove = true;
     }
 
     std::size_t futureSize = 0;
@@ -581,9 +725,21 @@ bool Game::loadFromFile(const std::string& filename) {
         snapshot.history.clear();
         snapshot.future.clear();
         snapshot.m_enableHistory = false;
+        snapshot.m_deadMark.fill(0);
+        snapshot.m_koRefBoard = *snapshot.board;
+        snapshot.m_hasKoRef = false;
         snapshot.rebuildGroupsFromBoard();
 
         future.push_back(std::move(snapshot));
+    }
+
+    // Reconstruct ko reference from last history snapshot if available.
+    if (!history.empty()) {
+        m_koRefBoard = *history.back().board;
+        m_hasKoRef = true;
+    } else {
+        m_koRefBoard = *board;
+        m_hasKoRef = false;
     }
 
     return true;

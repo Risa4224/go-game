@@ -5,6 +5,7 @@
 #include "board.h"
 #include "group.h"
 #include <array>
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <utility>
@@ -33,6 +34,17 @@ private:
     // - Main game instance records history (true)
     // - Snapshots / copies (used in AI search, history, redo stack) do NOT record history (false)
     bool m_enableHistory = true;
+
+
+    // Simple ko reference: board position before the last move (used to detect immediate ko recapture),
+    // maintained even when history recording is disabled (AI snapshots).
+    Board m_koRefBoard{};
+    bool  m_hasKoRef = false;
+
+    // Endgame scoring support: mark dead stones/groups (for Japanese-style scoring).
+    // 0 = alive/ignored, 1 = marked dead (removed for scoring and counted as captures for opponent).
+    std::array<std::uint8_t, BOARD_CELLS> m_deadMark{};
+
 
     // internal helpers
     bool valid(int x, int y) const;
@@ -74,6 +86,13 @@ public:
 
     // simple ko check helper (so sánh với trạng thái trước đó)
     bool checkKO() const;
+
+
+    // Dead-stone marking (optional UI feature for correct endgame scoring).
+    // These do NOT affect gameplay legality; only used by calculateFinalScore().
+    void clearDeadMarks();
+    bool toggleDeadGroupAt(int x, int y);
+    bool isDeadAt(int x, int y) const;
 
     std::pair<float, float> calculateFinalScore(float komi = 6.5f) const;
 
