@@ -1,60 +1,36 @@
 // board.cpp
-#include <iostream>
 #include "board.h"
-#include "nonclass.h" 
-#include <fstream>
-
-
-using namespace std;
-
+#include <iostream>
 
 Board::Board() {
-    for(int i = 0; i < 19; ++i) {
-        for(int j = 0; j < 19; ++j) {
-            board[i][j] = NONE;
-        }
-    }
+    cells.fill(NONE);
 }
 
 PieceColor Board::getPiece(int x, int y) const {
-    if (x < 0 || x >= 19 || y < 0 || y >= 19) return NONE;
-    return board[x][y];
-}
-
-
-// empties the location on the board
-void Board::removePiece(int x, int y) {
-    if (x >= 0 && x < 19 && y >= 0 && y < 19) {
-        board[x][y] = NONE;
-    }
+    if (!inBounds(x, y)) return NONE;
+    return cells[encodePos(x, y)];
 }
 
 void Board::setPiece(int x, int y, PieceColor c) {
-    if (x >= 0 && x < 19 && y >= 0 && y < 19) {
-        board[x][y] = c;
-    }
+    if (!inBounds(x, y)) return;
+    cells[encodePos(x, y)] = c;
 }
 
-bool Board::isEqual(const Board& other) const {
-    for (int i = 0; i < 19; ++i) {
-        for (int j = 0; j < 19; ++j) {
-            // So sánh từng ô
-            if (this->board[i][j] != other.board[i][j]) {
-                return false; 
-            }
-        }
-    }
-    return true; 
+void Board::removePiece(int x, int y) {
+    if (!inBounds(x, y)) return;
+    cells[encodePos(x, y)] = NONE;
 }
 
+void Board::clear() {
+    cells.fill(NONE);
+}
 
-// debug functions
 void Board::printDebug() const {
-    std::cout << "--- BOARD STATE ---" << std::endl;
-    for(int i = 0; i < 19; ++i) {
-        for(int j = 0; j < 19; ++j) {
-            std::cout << getPiece(i, j) << " ";
+    std::cout << "--- BOARD STATE ---\n";
+    for (int x = 0; x < BOARD_SIZE; ++x) {
+        for (int y = 0; y < BOARD_SIZE; ++y) {
+            std::cout << static_cast<int>(getPiece(x, y)) << ' ';
         }
-        std::cout << std::endl;
+        std::cout << '\n';
     }
 }

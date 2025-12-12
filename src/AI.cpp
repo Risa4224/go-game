@@ -3,6 +3,7 @@
 #include <array>
 #include <chrono>
 #include <cstdint>
+#include <cmath>
 #include <iostream>
 #include <limits>
 #include <queue>
@@ -11,10 +12,10 @@
 #include <utility>
 
 namespace {
-    constexpr int BOARD_SIZE = 19;
+    constexpr int kBoardSize = 19;
 
-    inline int idx(int x, int y) { return y * BOARD_SIZE + x; }
-    inline bool inBounds(int x, int y) { return (0 <= x && x < BOARD_SIZE && 0 <= y && y < BOARD_SIZE); }
+    inline int idx(int x, int y) { return y * kBoardSize + x; }
+    inline bool kinBounds(int x, int y) { return (0 <= x && x < kBoardSize && 0 <= y && y < kBoardSize); }
 
     // RNG dùng chung cho toàn bộ AI.
     std::mt19937& globalRng()
@@ -68,7 +69,7 @@ namespace {
 
         info.color = c;
 
-        g_seenLib.ensureSize(BOARD_SIZE * BOARD_SIZE);
+        g_seenLib.ensureSize(kBoardSize * kBoardSize);
         const int libTok = g_seenLib.nextToken();
 
         std::queue<std::pair<int,int>> q;
@@ -87,7 +88,7 @@ namespace {
             for (int dir = 0; dir < 4; ++dir) {
                 int nx = x + dx[dir];
                 int ny = y + dy[dir];
-                if (!inBounds(nx, ny)) continue;
+                if (!kinBounds(nx, ny)) continue;
 
                 PieceColor p = game.getPiece(nx, ny);
                 if (p == NONE) {
@@ -112,16 +113,16 @@ namespace {
 
     int countEmpty(const Game& game) {
         int empty = 0;
-        for (int y = 0; y < BOARD_SIZE; ++y)
-            for (int x = 0; x < BOARD_SIZE; ++x)
+        for (int y = 0; y < kBoardSize; ++y)
+            for (int x = 0; x < kBoardSize; ++x)
                 if (game.getPiece(x, y) == NONE) ++empty;
         return empty;
     }
 
     int countStones(const Game& game) {
         int s = 0;
-        for (int y = 0; y < BOARD_SIZE; ++y)
-            for (int x = 0; x < BOARD_SIZE; ++x)
+        for (int y = 0; y < kBoardSize; ++y)
+            for (int x = 0; x < kBoardSize; ++x)
                 if (game.getPiece(x, y) != NONE) ++s;
         return s;
     }
@@ -135,7 +136,7 @@ double GoAI::evaluateBoardHeuristic(const Game& game, PieceColor aiColor)
 {
     PieceColor oppColor = game.oppositeColor(aiColor);
 
-    g_seenStone.ensureSize(BOARD_SIZE * BOARD_SIZE);
+    g_seenStone.ensureSize(kBoardSize * kBoardSize);
     const int visitedTok = g_seenStone.nextToken();
 
     int aiStones = 0, oppStones = 0;
@@ -144,8 +145,8 @@ double GoAI::evaluateBoardHeuristic(const Game& game, PieceColor aiColor)
     int aiAtariStones = 0;
     int oppAtariStones = 0;
 
-    for (int y = 0; y < BOARD_SIZE; ++y) {
-        for (int x = 0; x < BOARD_SIZE; ++x) {
+    for (int y = 0; y < kBoardSize; ++y) {
+        for (int x = 0; x < kBoardSize; ++x) {
             if (game.getPiece(x, y) == NONE) continue;
             int id = idx(x, y);
             if (g_seenStone.isMarked(id, visitedTok)) continue;
@@ -182,13 +183,13 @@ std::vector<AIMove> GoAI::generateCandidateMoves(const Game& game)
 
     // Nếu bàn trống: đánh giữa
     bool anyStone = false;
-    for (int y = 0; y < BOARD_SIZE && !anyStone; ++y) {
-        for (int x = 0; x < BOARD_SIZE; ++x) {
+    for (int y = 0; y < kBoardSize && !anyStone; ++y) {
+        for (int x = 0; x < kBoardSize; ++x) {
             if (game.getPiece(x, y) != NONE) { anyStone = true; break; }
         }
     }
     if (!anyStone) {
-        int c = BOARD_SIZE / 2;
+        int c = kBoardSize / 2;
         return { AIMove(c, c, false) };
     }
 
@@ -196,17 +197,17 @@ std::vector<AIMove> GoAI::generateCandidateMoves(const Game& game)
     const PieceColor oppColor = game.oppositeColor(aiColor);
 
     constexpr int R = 2;
-    std::array<uint8_t, BOARD_SIZE * BOARD_SIZE> candMask{};
+    std::array<uint8_t, kBoardSize * kBoardSize> candMask{};
     candMask.fill(0);
 
     auto tryAdd = [&](int x, int y) {
-        if (!inBounds(x, y)) return;
+        if (!kinBounds(x, y)) return;
         if (game.getPiece(x, y) != NONE) return;
         candMask[idx(x, y)] = 1;
     };
 
-    for (int y = 0; y < BOARD_SIZE; ++y) {
-        for (int x = 0; x < BOARD_SIZE; ++x) {
+    for (int y = 0; y < kBoardSize; ++y) {
+        for (int x = 0; x < kBoardSize; ++x) {
             if (game.getPiece(x, y) == NONE) continue;
             for (int dy = -R; dy <= R; ++dy) {
                 for (int dx = -R; dx <= R; ++dx) {
@@ -230,20 +231,20 @@ std::vector<AIMove> GoAI::generateCandidateMoves(const Game& game)
     int candCount = 0;
     for (auto v : candMask) candCount += (v != 0);
     if (candCount == 0) {
-        for (int y = 0; y < BOARD_SIZE; ++y)
-            for (int x = 0; x < BOARD_SIZE; ++x)
+        for (int y = 0; y < kBoardSize; ++y)
+            for (int x = 0; x < kBoardSize; ++x)
                 if (game.getPiece(x, y) == NONE) candMask[idx(x,y)] = 1;
     }
 
     //    - liberties: để check atari
     //    - stones: để thưởng capture theo số quân có thể bắt/cứu
-    std::array<int, BOARD_SIZE * BOARD_SIZE> libCache;
-    std::array<int, BOARD_SIZE * BOARD_SIZE> sizeCache;
+    std::array<int, kBoardSize * kBoardSize> libCache;
+    std::array<int, kBoardSize * kBoardSize> sizeCache;
     libCache.fill(-1);
     sizeCache.fill(0);
 
-    g_tmpVisited.ensureSize(BOARD_SIZE * BOARD_SIZE);
-    g_seenLib.ensureSize(BOARD_SIZE * BOARD_SIZE);
+    g_tmpVisited.ensureSize(kBoardSize * kBoardSize);
+    g_seenLib.ensureSize(kBoardSize * kBoardSize);
 
     static const int dx4[4] = {-1, 1, 0, 0};
     static const int dy4[4] = {0, 0, -1, 1};
@@ -252,7 +253,7 @@ std::vector<AIMove> GoAI::generateCandidateMoves(const Game& game)
     groupStones.reserve(64);
 
     auto groupStatsCached = [&](int sx, int sy) -> std::pair<int,int> {
-        if (!inBounds(sx, sy)) return {0, 0};
+        if (!kinBounds(sx, sy)) return {0, 0};
         int id0 = idx(sx, sy);
         if (libCache[id0] != -1) return {libCache[id0], sizeCache[id0]};
 
@@ -278,7 +279,7 @@ std::vector<AIMove> GoAI::generateCandidateMoves(const Game& game)
             for (int dir = 0; dir < 4; ++dir) {
                 int nx = x + dx4[dir];
                 int ny = y + dy4[dir];
-                if (!inBounds(nx, ny)) continue;
+                if (!kinBounds(nx, ny)) continue;
 
                 PieceColor p = game.getPiece(nx, ny);
                 if (p == NONE) {
@@ -309,8 +310,8 @@ std::vector<AIMove> GoAI::generateCandidateMoves(const Game& game)
 
     scored.reserve(candCount);
 
-    for (int y = 0; y < BOARD_SIZE; ++y) {
-        for (int x = 0; x < BOARD_SIZE; ++x) {
+    for (int y = 0; y < kBoardSize; ++y) {
+        for (int x = 0; x < kBoardSize; ++x) {
             if (!candMask[idx(x,y)]) continue;
 
             int score = 0;
@@ -325,7 +326,7 @@ std::vector<AIMove> GoAI::generateCandidateMoves(const Game& game)
             for (int dir = 0; dir < 4; ++dir) {
                 int nx = x + dx4[dir];
                 int ny = y + dy4[dir];
-                if (!inBounds(nx, ny)) continue;
+                if (!kinBounds(nx, ny)) continue;
 
                 PieceColor p = game.getPiece(nx, ny);
                 if (p == NONE) {
@@ -567,23 +568,133 @@ AIMove GoAI::computeAIMove(const Game& game, AIDifficulty difficulty)
 
 bool GoAI::playAIMove(Game& game, AIDifficulty difficulty)
 {
-    AIMove move = computeAIMove(game, difficulty);
+    // NOTE (sync with optimized Game):
+    // - In AI search we use Game copies (snapshots) to avoid recording history.
+    // - That means KO may not be checked inside the copies.
+    // -> So when we actually PLAY, we always validate on the real `game` and
+    //    skip any move that the real rules reject (e.g., KO recapture).
 
-    if (move.isPass) {
-        std::cout << "AI chooses to PASS.\n";
+    const PieceColor aiColor = game.getTurn();
+
+    std::vector<AIMove> candidates = generateCandidateMoves(game);
+    if (candidates.empty()) {
+        std::cout << "AI cannot generate moves, PASS.\n";
         game.pass();
         return false;
     }
 
-    if (game.placeStone(move.x, move.y)) {
-        std::cout << "AI plays at (" << move.x << ", " << move.y << ")\n";
-        return true;
+    // EASY: pick a random legal move (validated on the real game).
+    if (difficulty == AIDifficulty::EASY) {
+        std::shuffle(candidates.begin(), candidates.end(), globalRng());
+        for (const AIMove& m : candidates) {
+            if (game.placeStone(m.x, m.y)) {
+                std::cout << "AI plays at (" << m.x << ", " << m.y << ")\n";
+                return true;
+            }
+        }
+        std::cout << "AI cannot find any legal move, PASS.\n";
+        game.pass();
+        return false;
     }
 
-    std::vector<AIMove> fallback = generateCandidateMoves(game);
-    std::shuffle(fallback.begin(), fallback.end(), globalRng());
+    // Depth settings
+    const int maxDepth = (difficulty == AIDifficulty::MEDIUM) ? 2 : 3;
 
-    for (const AIMove& m : fallback) {
+    // Budget (keep time stable)
+    g_budget.remaining = (difficulty == AIDifficulty::MEDIUM) ? 2500 : 12000;
+
+    const bool useAlphaBeta = (difficulty == AIDifficulty::HARD);
+    const int ROOT_LIMIT = (difficulty == AIDifficulty::HARD) ? 40 : 60;
+
+    struct RootChoice { AIMove move; double score; };
+    std::vector<RootChoice> root;
+    root.reserve(ROOT_LIMIT);
+
+    // Score root moves using cheap copy-based search.
+    int considered = 0;
+    for (const AIMove& m : candidates) {
+        Game child = game; // copy ctor creates a snapshot (no history recording)
+        if (!child.placeStone(m.x, m.y)) continue;
+
+        ++considered;
+        if (considered > ROOT_LIMIT) break;
+
+        double score;
+        if (useAlphaBeta) {
+            score = minimaxAlphaBeta(child,
+                                     1,
+                                     maxDepth,
+                                     -std::numeric_limits<double>::infinity(),
+                                     +std::numeric_limits<double>::infinity(),
+                                     false,
+                                     aiColor);
+        } else {
+            score = minimax(child, 1, maxDepth, false, aiColor);
+
+            // small noise so Medium feels less deterministic
+            std::uniform_real_distribution<double> noise(-0.6, 0.6);
+            score += noise(globalRng());
+        }
+
+        root.push_back({ AIMove(m.x, m.y, false), score });
+    }
+
+    if (root.empty()) {
+        std::cout << "AI cannot find any legal move (after scoring), PASS.\n";
+        game.pass();
+        return false;
+    }
+
+    std::sort(root.begin(), root.end(),
+              [](const RootChoice& a, const RootChoice& b) { return a.score > b.score; });
+
+    // Consider PASS (late game): only when it's not clearly worse than the best found move.
+    const int emptyNow = countEmpty(game);
+    const bool lateGame = (emptyNow <= 60) || ((int)root.size() <= 10);
+    if (lateGame) {
+        const double passBias = (emptyNow <= 40) ? 0.0 : -1.5;
+        const double passScore = evaluateBoardHeuristic(game, aiColor) + passBias;
+
+        if (passScore >= root.front().score - 0.75) {
+            std::cout << "AI chooses to PASS.\n";
+            game.pass();
+            return false;
+        }
+    }
+
+    // Try to actually play on the REAL game (so KO/invalid rules are enforced).
+    if (difficulty == AIDifficulty::MEDIUM) {
+        // Try a random pick among the top-K first, then fall back down the list.
+        const int K = std::min<int>(3, (int)root.size());
+
+        std::vector<int> order;
+        order.reserve(root.size());
+        for (int i = 0; i < (int)root.size(); ++i) order.push_back(i);
+
+        // shuffle only top-K indices to keep it "medium" but not too random
+        std::shuffle(order.begin(), order.begin() + K, globalRng());
+
+        for (int idxChoice : order) {
+            const AIMove& m = root[idxChoice].move;
+            if (game.placeStone(m.x, m.y)) {
+                std::cout << "AI plays at (" << m.x << ", " << m.y << ")\n";
+                return true;
+            }
+        }
+    } else {
+        // HARD: best-first
+        for (const auto& rc : root) {
+            const AIMove& m = rc.move;
+            if (game.placeStone(m.x, m.y)) {
+                std::cout << "AI plays at (" << m.x << ", " << m.y << ")\n";
+                return true;
+            }
+        }
+    }
+
+    // Last resort: try any candidate directly.
+    std::shuffle(candidates.begin(), candidates.end(), globalRng());
+    for (const AIMove& m : candidates) {
         if (game.placeStone(m.x, m.y)) {
             std::cout << "AI fallback move at (" << m.x << ", " << m.y << ")\n";
             return true;
@@ -594,3 +705,4 @@ bool GoAI::playAIMove(Game& game, AIDifficulty difficulty)
     game.pass();
     return false;
 }
+

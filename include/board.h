@@ -3,31 +3,28 @@
 #define BOARD_H_INCLUDED
 
 #include "nonclass.h"
-#include "group.h" // Cần cho PieceGroup
-#include <vector>
+#include <array>
 
 class Board {
 public:
-	Board();
-	
-	// Phương thức Cấp độ Board (Truy cập dữ liệu)
-	PieceColor getPiece(int, int) const; // Thêm const
-	void removePiece(int, int);
-	// Đổi tên thành setPiece để thể hiện chỉ là thao tác cơ bản
-    void setPiece(int, int, PieceColor); 
-    
-    // Thêm getter cho kích thước bàn cờ
-    int getSize() const { return 19; } 
-    
-	void printDebug() const; // Thêm const
-	
-	bool isEqual(const Board& other) const; // So sánh hai bàn cờ, thêm const
+    Board();
+
+    // Truy cập dữ liệu board
+    PieceColor getPiece(int x, int y) const;
+    void setPiece(int x, int y, PieceColor c);
+    void removePiece(int x, int y);
+
+    // Size cố định 19
+    int getSize() const { return BOARD_SIZE; }
+
+    void clear();
+    void printDebug() const;
+
+    // So sánh nhanh toàn board (dùng std::array compare)
+    bool isEqual(const Board& other) const { return cells == other.cells; }
 
 private:
-    // LOẠI BỎ: std::vector<PieceGroup> groups; (Chuyển sang Game)
-    // LOẠI BỎ: PieceColor turn; (Chuyển sang Game)
-	PieceColor board[19][19];
+    std::array<PieceColor, BOARD_CELLS> cells;
 };
-
 
 #endif // BOARD_H_INCLUDED
