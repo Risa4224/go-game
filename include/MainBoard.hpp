@@ -2,6 +2,8 @@
 
 #include <memory>
 #include <vector>
+#include <optional>
+#include <string>
 
 #include "State.hpp"
 #include "GameApp.h"
@@ -28,12 +30,15 @@ private:
 
     std::vector<sf::CircleShape> m_stones;
 
+    // UI Buttons
     sf::RectangleShape m_undoButtonBox;
     sf::RectangleShape m_redoButtonBox;
     sf::RectangleShape m_passButtonBox;
     sf::RectangleShape m_pauseButtonBox;
     sf::RectangleShape m_saveButtonBox;
     sf::RectangleShape m_loadButtonBox;
+    
+    // Hover states
     bool m_undoHovered;
     bool m_redoHovered;
     bool m_passHovered;
@@ -41,31 +46,41 @@ private:
     bool m_saveHovered;
     bool m_loadHovered;
 
+    // Textures for Themes
     sf::Texture m_boardTextureClassic;
     sf::Texture m_boardTextureDark;
     bool m_hasClassicTexture = false;
     bool m_hasDarkTexture = false;
 
+    // Notification Logic
     std::string m_notificationText;
-    sf::Clock m_notificationClock;
     bool m_showNotification = false;
-    float m_notificationDuration = 3.f; // seconds
+    sf::Clock m_notificationClock;
+    float m_notificationDuration = 3.f; 
 
-    void setNotification(const std::string &msg);
+    // Menu Overlay Text Helpers (for Save/Load menu)
+    std::optional<sf::Text> m_menuTitleText;
+    std::optional<sf::Text> m_menuDeleteText;
+    std::optional<sf::Text> m_menuCancelText;
+    std::optional<sf::Text> m_menuActionText;
+    std::optional<sf::Text> m_fileListText;
+
     std::unique_ptr<Game> m_game;
 
+    void setNotification(const std::string &msg);
     void buildGrid();
     void rebuildStonesFromGame();
     void handleLeftClick(const sf::Vector2i &pixelPos);
     void resetGame();
 
-    // --- AI mode helpers ---
+    // AI Helpers
     bool isAIMode() const;
     PieceColor humanColor() const;
     PieceColor aiColor() const;
     void maybeRunAITurn();
     void handleGameOver();
-    // Sound effects
+    
+    // Sounds
     sf::Sound m_placeSound;
     sf::Sound m_passSound;
     sf::Sound m_invalidSound;
