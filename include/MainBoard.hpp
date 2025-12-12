@@ -58,6 +58,13 @@ private:
     void rebuildStonesFromGame();
     void handleLeftClick(const sf::Vector2i &pixelPos);
     void resetGame();
+
+    // --- AI mode helpers ---
+    bool isAIMode() const;
+    PieceColor humanColor() const;
+    PieceColor aiColor() const;
+    void maybeRunAITurn();
+    void handleGameOver();
     // Sound effects
     sf::Sound m_placeSound;
     sf::Sound m_passSound;

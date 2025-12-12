@@ -6,6 +6,7 @@
 
 #include "AssetMan.hpp"
 #include "StateManager.hpp"
+#include "Ai.h"
 
 // ID của asset (font, texture, v.v.)
 enum AssetID
@@ -40,6 +41,8 @@ struct Context
     GameMode  m_gameMode;
     bool m_requestBoardRestart = false;
     BoardTheme m_boardTheme = BoardTheme::Classic;
+    AIDifficulty m_aiDifficulty = AIDifficulty::MEDIUM;
+    bool m_humanPlaysBlack{true};
     Context()
     {
         m_assets       = std::make_unique<Engine::AssetMan>();

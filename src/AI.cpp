@@ -566,7 +566,7 @@ AIMove GoAI::computeAIMove(const Game& game, AIDifficulty difficulty)
     return root.front().move;
 }
 
-bool GoAI::playAIMove(Game& game, AIDifficulty difficulty)
+AIMoveOutcome GoAI::playAIMoveWithOutcome(Game& game, AIDifficulty difficulty)
 {
     // NOTE (sync with optimized Game):
     // - In AI search we use Game copies (snapshots) to avoid recording history.
@@ -579,8 +579,8 @@ bool GoAI::playAIMove(Game& game, AIDifficulty difficulty)
     std::vector<AIMove> candidates = generateCandidateMoves(game);
     if (candidates.empty()) {
         std::cout << "AI cannot generate moves, PASS.\n";
-        game.pass();
-        return false;
+        bool finished = game.pass();
+        return { false, finished };
     }
 
     // EASY: pick a random legal move (validated on the real game).
@@ -589,12 +589,12 @@ bool GoAI::playAIMove(Game& game, AIDifficulty difficulty)
         for (const AIMove& m : candidates) {
             if (game.placeStone(m.x, m.y)) {
                 std::cout << "AI plays at (" << m.x << ", " << m.y << ")\n";
-                return true;
+                return { true, false };
             }
         }
         std::cout << "AI cannot find any legal move, PASS.\n";
-        game.pass();
-        return false;
+        bool finished = game.pass();
+        return { false, finished };
     }
 
     // Depth settings
@@ -641,8 +641,8 @@ bool GoAI::playAIMove(Game& game, AIDifficulty difficulty)
 
     if (root.empty()) {
         std::cout << "AI cannot find any legal move (after scoring), PASS.\n";
-        game.pass();
-        return false;
+        bool finished = game.pass();
+        return { false, finished };
     }
 
     std::sort(root.begin(), root.end(),
@@ -657,8 +657,8 @@ bool GoAI::playAIMove(Game& game, AIDifficulty difficulty)
 
         if (passScore >= root.front().score - 0.75) {
             std::cout << "AI chooses to PASS.\n";
-            game.pass();
-            return false;
+            bool finished = game.pass();
+        return { false, finished };
         }
     }
 
@@ -678,7 +678,7 @@ bool GoAI::playAIMove(Game& game, AIDifficulty difficulty)
             const AIMove& m = root[idxChoice].move;
             if (game.placeStone(m.x, m.y)) {
                 std::cout << "AI plays at (" << m.x << ", " << m.y << ")\n";
-                return true;
+                return { true, false };
             }
         }
     } else {
@@ -687,7 +687,7 @@ bool GoAI::playAIMove(Game& game, AIDifficulty difficulty)
             const AIMove& m = rc.move;
             if (game.placeStone(m.x, m.y)) {
                 std::cout << "AI plays at (" << m.x << ", " << m.y << ")\n";
-                return true;
+                return { true, false };
             }
         }
     }
@@ -697,12 +697,18 @@ bool GoAI::playAIMove(Game& game, AIDifficulty difficulty)
     for (const AIMove& m : candidates) {
         if (game.placeStone(m.x, m.y)) {
             std::cout << "AI fallback move at (" << m.x << ", " << m.y << ")\n";
-            return true;
+            return { true, false };
         }
     }
 
     std::cout << "AI cannot find any legal move, PASS.\n";
-    game.pass();
-    return false;
+    bool finished = game.pass();
+        return { false, finished };
 }
+
+bool GoAI::playAIMove(Game& game, AIDifficulty difficulty)
+{
+    return playAIMoveWithOutcome(game, difficulty).playedStone;
+}
+
 

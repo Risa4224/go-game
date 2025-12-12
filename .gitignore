@@ -5,7 +5,7 @@ build/
 # Folder bin chứa file exe sau khi build -> Không cần commit
 bin/
 out/
-
+saved_game/ 
 # CMake generated files
 CMakeFiles/
 CMakeCache.txt

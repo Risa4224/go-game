@@ -1,9 +1,118 @@
+
 #include "MainBoard.hpp"
+
 #include <SFML/Window/Event.hpp>
+
+#include <algorithm>
+#include <filesystem>
 #include <iostream>
+#include <optional>
+#include <string>
+#include <vector>
+
+#include "AI.h"
 #include "PauseState.hpp"
+
+namespace fs = std::filesystem;
+
+namespace
+{
+    enum class SaveLoadMode
+    {
+        Save,
+        Load
+    };
+
+    struct SaveLoadMenuState
+    {
+        bool open = false;
+        SaveLoadMode mode = SaveLoadMode::Save;
+
+        std::vector<std::string> files;
+        int selected = -1;
+
+        int scroll = 0;              // in rows
+        int visibleRows = 10;
+        float rowHeight = 28.f;
+
+        // simple double-click support
+        sf::Clock clickClock;
+        int lastClickedRow = -1;
+
+        void refresh()
+        {
+            files = Game::listSaveFiles();
+            if (files.empty())
+            {
+                selected = -1;
+                scroll = 0;
+                return;
+            }
+
+            if (selected < 0) selected = 0;
+            if (selected >= static_cast<int>(files.size())) selected = static_cast<int>(files.size()) - 1;
+            scroll = std::clamp(scroll, 0, std::max(0, static_cast<int>(files.size()) - visibleRows));
+        }
+
+        void clampScroll()
+        {
+            scroll = std::clamp(scroll, 0, std::max(0, static_cast<int>(files.size()) - visibleRows));
+        }
+    };
+
+    SaveLoadMenuState g_saveLoad;
+
+    // Best-effort deletion without depending on Game::SAVE_DIR visibility.
+    bool tryDeleteSaveFile(const std::string& filename)
+    {
+        std::error_code ec;
+
+        // 1) try in "saves/" (matches Game::saveNamed/listSaveFiles in your pasted game.cpp)
+        if (fs::remove(fs::path("saves") / filename, ec)) return true;
+
+        // 2) try direct name
+        ec.clear();
+        if (fs::remove(fs::path(filename), ec)) return true;
+
+        // 3) try add ".go" in both places
+        const std::string withExt = (filename.size() >= 3 && filename.compare(filename.size()-3, 3, ".go")==0) ? filename : (filename + ".go");
+
+        ec.clear();
+        if (fs::remove(fs::path("saves") / withExt, ec)) return true;
+
+        ec.clear();
+        if (fs::remove(fs::path(withExt), ec)) return true;
+
+        return false;
+    }
+} // namespace
+
 MainBoard::MainBoard(std::shared_ptr<Context> &context)
-    : m_context(context), m_boardBackground(), m_gridLines(), m_boardPixelSize(650.f), m_boardSize(19), m_cellSize(0.f), m_boardTopLeft(0.f, 0.f), m_stones(), m_undoButtonBox(), m_redoButtonBox(), m_undoHovered(false), m_redoHovered(false), m_saveHovered(false), m_loadHovered(false), m_game(std::make_unique<Game>(new Board())) ,m_placeSound(m_context->m_assets->GetSoundBuffer(STONEPLACE_SOUND)),m_passSound(m_context->m_assets->GetSoundBuffer(PASS_SOUND)),m_invalidSound(m_context->m_assets->GetSoundBuffer(INVALID_SOUND)),m_winSound(m_context->m_assets->GetSoundBuffer(WIN_SOUND))
+    : m_context(context),
+      m_boardBackground(),
+      m_gridLines(),
+      m_boardPixelSize(650.f),
+      m_boardSize(19),
+      m_cellSize(0.f),
+      m_boardTopLeft(0.f, 0.f),
+      m_stones(),
+      m_undoButtonBox(),
+      m_redoButtonBox(),
+      m_passButtonBox(),
+      m_pauseButtonBox(),
+      m_saveButtonBox(),
+      m_loadButtonBox(),
+      m_undoHovered(false),
+      m_redoHovered(false),
+      m_passHovered(false),
+      m_pauseHovered(false),
+      m_saveHovered(false),
+      m_loadHovered(false),
+      m_game(std::make_unique<Game>(new Board())),
+      m_placeSound(m_context->m_assets->GetSoundBuffer(STONEPLACE_SOUND)),
+      m_passSound(m_context->m_assets->GetSoundBuffer(PASS_SOUND)),
+      m_invalidSound(m_context->m_assets->GetSoundBuffer(INVALID_SOUND)),
+      m_winSound(m_context->m_assets->GetSoundBuffer(WIN_SOUND))
 {
     std::cout << "[MainBoard] ctor\n";
 }
@@ -24,16 +133,17 @@ void MainBoard::Init()
     m_boardTopLeft.x = (winSizeF.x - m_boardPixelSize) * 0.5f;
     m_boardTopLeft.y = (winSizeF.y - m_boardPixelSize) * 0.5f;
     m_boardBackground.setPosition(m_boardTopLeft);
+
     m_hasClassicTexture = m_boardTextureClassic.loadFromFile("assets/texture/light-wood.jpg");
     if (!m_hasClassicTexture)
     {
-        std::cout << "[MainBoard] Warning: could not load assets/board_classic.png\n";
+        std::cout << "[MainBoard] Warning: could not load assets/texture/light-wood.jpg\n";
     }
 
     m_hasDarkTexture = m_boardTextureDark.loadFromFile("assets/texture/dark-stone.jpg");
     if (!m_hasDarkTexture)
     {
-        std::cout << "[MainBoard] Warning: could not load assets/board_dark.png\n";
+        std::cout << "[MainBoard] Warning: could not load assets/texture/dark-stone.jpg\n";
     }
 
     m_cellSize = m_boardPixelSize / static_cast<float>(m_boardSize - 1);
@@ -69,7 +179,130 @@ void MainBoard::Init()
 
     rebuildStonesFromGame();
 
+    // If AI is Black (human chose White), let AI play first.
+    maybeRunAITurn();
+
     std::cout << "[MainBoard] Init END\n";
+}
+
+bool MainBoard::isAIMode() const
+{
+    return m_context && (m_context->m_gameMode == GameMode::AiVsPlayer);
+}
+
+PieceColor MainBoard::humanColor() const
+{
+    if (!m_context)
+        return BLACK;
+    return (m_context->m_humanPlaysBlack ? BLACK : WHITE);
+}
+
+PieceColor MainBoard::aiColor() const
+{
+    return (humanColor() == BLACK) ? WHITE : BLACK;
+}
+
+void MainBoard::handleGameOver()
+{
+    if (!m_game)
+        return;
+
+    auto [blackScore, whiteScore] = m_game->calculateFinalScore();
+    std::string msg;
+
+    if (blackScore > whiteScore)
+    {
+        float diff = blackScore - whiteScore;
+        msg = "Black wins by " + std::to_string(diff) +
+              " points.\nBlack: " + std::to_string(blackScore) +
+              " | White: " + std::to_string(whiteScore);
+    }
+    else if (whiteScore > blackScore)
+    {
+        float diff = whiteScore - blackScore;
+        msg = "White wins by " + std::to_string(diff) +
+              " points.\nBlack: " + std::to_string(blackScore) +
+              " | White: " + std::to_string(whiteScore);
+    }
+    else
+    {
+        msg = "It's a draw!\nBoth players: " + std::to_string(blackScore);
+    }
+
+    setNotification(msg);
+    m_winSound.play();
+
+    m_context->m_states->Add(
+        std::make_unique<PauseState>(m_context, PauseState::Mode::GameOver, msg),
+        false);
+}
+
+void MainBoard::maybeRunAITurn()
+{
+    if (!isAIMode() || !m_game)
+        return;
+
+    if (m_game->getTurn() != aiColor())
+        return;
+
+    AIDifficulty diff = m_context->m_aiDifficulty;
+
+    AIMove mv = GoAI::computeAIMove(*m_game, diff);
+
+    if (mv.isPass)
+    {
+        bool finished = m_game->pass();
+        m_passSound.play();
+        rebuildStonesFromGame();
+        setNotification("AI passed.");
+        if (finished)
+            handleGameOver();
+        return;
+    }
+
+    bool placed = m_game->placeStone(mv.x, mv.y);
+    if (!placed)
+    {
+        bool found = false;
+        for (int y = 0; y < m_boardSize && !found; ++y)
+        {
+            for (int x = 0; x < m_boardSize && !found; ++x)
+            {
+                if (m_game->placeStone(x, y))
+                {
+                    mv.x = x;
+                    mv.y = y;
+                    mv.isPass = false;
+                    found = true;
+                }
+            }
+        }
+
+        if (!found)
+        {
+            bool finished = m_game->pass();
+            m_passSound.play();
+            rebuildStonesFromGame();
+            setNotification("AI passed.");
+            if (finished)
+                handleGameOver();
+            return;
+        }
+    }
+
+    m_placeSound.play();
+    rebuildStonesFromGame();
+
+    int caps = m_game->getLastCaptures();
+    std::string msg = "AI played at (" + std::to_string(mv.x) + ", " + std::to_string(mv.y) + ").";
+
+    if (caps > 0)
+        msg += " Captured " + std::to_string(caps) + (caps == 1 ? " stone." : " stones.");
+
+    if (m_game->lastMoveCreatedKoThreat())
+        msg += " Ko threat: immediate recapture is forbidden.";
+
+    setNotification(msg);
 }
 
 void MainBoard::setNotification(const std::string &msg)
@@ -183,6 +416,13 @@ void MainBoard::handleLeftClick(const sf::Vector2i &pixelPos)
     if (!m_game)
         return;
 
+    // In AI mode, block clicks when it's not the human's turn.
+    if (isAIMode() && m_game->getTurn() != humanColor())
+    {
+        setNotification("Please wait for AI to move.");
+        return;
+    }
+
     bool ok = m_game->placeStone(ix, iy);
     if (ok)
     {
@@ -191,19 +431,15 @@ void MainBoard::handleLeftClick(const sf::Vector2i &pixelPos)
 
         int caps = m_game->getLastCaptures();
 
-        // Player who just played = opposite of current turn
         PieceColor now = m_game->getTurn();
         PieceColor played = (now == BLACK ? WHITE : (now == WHITE ? BLACK : NONE));
 
-        std::string playerName = (played == BLACK ? "Black" : played == WHITE ? "White"
-                                                                              : "Player");
-
+        std::string playerName = (played == BLACK ? "Black" : played == WHITE ? "White" : "Player");
         std::string msg;
 
         if (caps > 0)
         {
-            msg = playerName + " captured " + std::to_string(caps) +
-                  (caps == 1 ? " stone." : " stones.");
+            msg = playerName + " captured " + std::to_string(caps) + (caps == 1 ? " stone." : " stones.");
         }
 
         if (m_game->lastMoveCreatedKoThreat())
@@ -215,6 +451,9 @@ void MainBoard::handleLeftClick(const sf::Vector2i &pixelPos)
 
         if (!msg.empty())
             setNotification(msg);
+
+        // In AI mode, let AI respond after the human moves.
+        maybeRunAITurn();
     }
     else
     {
@@ -230,211 +469,391 @@ void MainBoard::handleLeftClick(const sf::Vector2i &pixelPos)
             msg = "Invalid move.";
 
         setNotification(msg);
-
         std::cout << "[MainBoard] Invalid move at (" << ix << ", " << iy << ")\n";
     }
 }
 
 void MainBoard::ProcessInput()
 {
+    auto openSaveMenu = [&]() {
+        g_saveLoad.open = true;
+        g_saveLoad.mode = SaveLoadMode::Save;
+        g_saveLoad.selected = -1;
+        g_saveLoad.scroll = 0;
+        g_saveLoad.refresh();
+        g_saveLoad.clampScroll();
+    };
+
+    auto openLoadMenu = [&]() {
+        g_saveLoad.open = true;
+        g_saveLoad.mode = SaveLoadMode::Load;
+        g_saveLoad.selected = -1;
+        g_saveLoad.scroll = 0;
+        g_saveLoad.refresh();
+        g_saveLoad.clampScroll();
+    };
+
+    auto doLoadSelected = [&]() -> bool {
+        if (!m_game) return false;
+        if (g_saveLoad.selected < 0 || g_saveLoad.selected >= (int)g_saveLoad.files.size()) return false;
+
+        const std::string& name = g_saveLoad.files[g_saveLoad.selected];
+        if (m_game->loadNamed(name)) {
+            rebuildStonesFromGame();
+            setNotification("Loaded: " + name);
+            maybeRunAITurn();
+            return true;
+        }
+        setNotification("Failed to load: " + name);
+        return false;
+    };
+
+    auto doSaveNew = [&]() -> bool {
+        if (!m_game) return false;
+
+        std::string outFile;
+        if (m_game->saveToNewSlot(outFile)) {
+            setNotification("Saved: " + outFile);
+            g_saveLoad.refresh();
+            auto it = std::find(g_saveLoad.files.begin(), g_saveLoad.files.end(), outFile);
+            if (it != g_saveLoad.files.end())
+                g_saveLoad.selected = (int)std::distance(g_saveLoad.files.begin(), it);
+            g_saveLoad.clampScroll();
+            return true;
+        }
+        setNotification("Failed to save.");
+        return false;
+    };
+
+    auto doSaveOverwrite = [&]() -> bool {
+        if (!m_game) return false;
+        if (g_saveLoad.selected < 0 || g_saveLoad.selected >= (int)g_saveLoad.files.size()) return false;
+
+        const std::string& name = g_saveLoad.files[g_saveLoad.selected];
+        if (m_game->saveNamed(name)) {
+            setNotification("Saved (overwrite): " + name);
+            g_saveLoad.refresh();
+            g_saveLoad.clampScroll();
+            return true;
+        }
+        setNotification("Failed to save: " + name);
+        return false;
+    };
+
+    auto doDeleteSelected = [&]() -> bool {
+        if (g_saveLoad.selected < 0 || g_saveLoad.selected >= (int)g_saveLoad.files.size()) return false;
+
+        const std::string name = g_saveLoad.files[g_saveLoad.selected];
+        if (!tryDeleteSaveFile(name)) {
+            setNotification("Failed to delete: " + name);
+            return false;
+        }
+
+        setNotification("Deleted: " + name);
+        g_saveLoad.refresh();
+
+        if (g_saveLoad.files.empty()) {
+            g_saveLoad.selected = -1;
+            g_saveLoad.scroll = 0;
+        } else {
+            g_saveLoad.selected = std::min(g_saveLoad.selected, (int)g_saveLoad.files.size() - 1);
+        }
+        g_saveLoad.clampScroll();
+        return true;
+    };
+
+    auto panelRect = [&]() -> sf::FloatRect {
+        auto winSize = m_context->m_window->getSize();
+        const sf::Vector2f winF((float)winSize.x, (float)winSize.y);
+        const sf::Vector2f panelSize(520.f, 440.f);
+        const sf::Vector2f panelPos((winF.x - panelSize.x) * 0.5f, (winF.y - panelSize.y) * 0.5f);
+        return sf::FloatRect(panelPos, panelSize);
+    };
+
+    auto listRect = [&]() -> sf::FloatRect {
+        const auto p = panelRect();
+        const float listX = p.position.x + 20.f;
+        const float listY = p.position.y + 70.f;
+        const float listW = p.size.x - 40.f;
+        const float listH = g_saveLoad.rowHeight * (float)g_saveLoad.visibleRows;
+        return sf::FloatRect({listX, listY}, {listW, listH});
+    };
+
+    auto buttonRects = [&]() -> std::array<sf::FloatRect, 3> {
+        const auto p = panelRect();
+        const float btnY = p.position.y + p.size.y - 60.f;
+        const float btnH = 36.f;
+        const float btnW = 150.f;
+
+        sf::FloatRect left ({p.position.x + 20.f,                 btnY}, {btnW, btnH}); // Delete
+        sf::FloatRect mid  ({p.position.x + (p.size.x - btnW)*0.5f, btnY}, {btnW, btnH}); // Overwrite/Cancel
+        sf::FloatRect right({p.position.x + p.size.x - btnW - 20.f, btnY}, {btnW, btnH}); // SaveNew/Load
+        return {left, mid, right};
+    };
+
     while (const std::optional event = m_context->m_window->pollEvent())
     {
-        if (event->is<sf::Event::Closed>())
-        {
+        if (event->is<sf::Event::Closed>()) {
             m_context->m_window->close();
             return;
         }
-        else if (const auto *keyPressed = event->getIf<sf::Event::KeyPressed>())
-        {
-            if (keyPressed->scancode == sf::Keyboard::Scancode::Escape)
-            {
 
-                std::cout << "Trying to return to menu\n";
+        // =========================
+        // SAVE/LOAD MENU (modal)
+        // =========================
+        if (g_saveLoad.open)
+        {
+            if (const auto* key = event->getIf<sf::Event::KeyPressed>())
+            {
+                if (key->scancode == sf::Keyboard::Scancode::Escape) {
+                    g_saveLoad.open = false;
+                    continue;
+                }
+
+                // Switch tab while open
+                if (key->control && key->scancode == sf::Keyboard::Scancode::S) {
+                    g_saveLoad.mode = SaveLoadMode::Save;
+                    g_saveLoad.refresh();
+                    g_saveLoad.clampScroll();
+                    continue;
+                }
+                if (key->control && key->scancode == sf::Keyboard::Scancode::L) {
+                    g_saveLoad.mode = SaveLoadMode::Load;
+                    g_saveLoad.refresh();
+                    g_saveLoad.clampScroll();
+                    continue;
+                }
+
+                if (key->scancode == sf::Keyboard::Scancode::Up) {
+                    if (!g_saveLoad.files.empty()) {
+                        if (g_saveLoad.selected < 0) g_saveLoad.selected = 0;
+                        g_saveLoad.selected = std::max(0, g_saveLoad.selected - 1);
+                        if (g_saveLoad.selected < g_saveLoad.scroll)
+                            g_saveLoad.scroll = g_saveLoad.selected;
+                        g_saveLoad.clampScroll();
+                    }
+                    continue;
+                }
+
+                if (key->scancode == sf::Keyboard::Scancode::Down) {
+                    if (!g_saveLoad.files.empty()) {
+                        if (g_saveLoad.selected < 0) g_saveLoad.selected = 0;
+                        g_saveLoad.selected = std::min((int)g_saveLoad.files.size() - 1, g_saveLoad.selected + 1);
+                        if (g_saveLoad.selected >= g_saveLoad.scroll + g_saveLoad.visibleRows)
+                            g_saveLoad.scroll = g_saveLoad.selected - g_saveLoad.visibleRows + 1;
+                        g_saveLoad.clampScroll();
+                    }
+                    continue;
+                }
+
+                if (key->scancode == sf::Keyboard::Scancode::Delete) {
+                    doDeleteSelected();
+                    continue;
+                }
+
+                if (key->scancode == sf::Keyboard::Scancode::Enter ||
+                    key->scancode == sf::Keyboard::Scancode::NumpadEnter)
+                {
+                    if (g_saveLoad.mode == SaveLoadMode::Load) {
+                        if (doLoadSelected()) g_saveLoad.open = false;
+                    } else {
+                        // Save menu: Enter = Save New, Ctrl+Enter = Overwrite selected
+                        if (key->control) doSaveOverwrite();
+                        else doSaveNew();
+                    }
+                    continue;
+                }
+            }
+            else if (const auto* wheel = event->getIf<sf::Event::MouseWheelScrolled>())
+            {
+                if (!g_saveLoad.files.empty()) {
+                    const int delta = (wheel->delta > 0.f) ? -1 : 1;
+                    g_saveLoad.scroll += delta;
+                    g_saveLoad.clampScroll();
+                }
+                continue;
+            }
+            else if (const auto* mb = event->getIf<sf::Event::MouseButtonPressed>())
+            {
+                if (mb->button == sf::Mouse::Button::Left)
+                {
+                    const sf::Vector2f mouse((float)mb->position.x, (float)mb->position.y);
+                    const auto pRect = panelRect();
+
+                    // Click outside => close
+                    if (!pRect.contains(mouse)) {
+                        g_saveLoad.open = false;
+                        continue;
+                    }
+
+                    // Click list => select / double-click load
+                    const auto lRect = listRect();
+                    if (lRect.contains(mouse))
+                    {
+                        const float localY = mouse.y - lRect.position.y;
+                        const int row = (int)(localY / g_saveLoad.rowHeight);
+                        const int idx = g_saveLoad.scroll + row;
+
+                        if (idx >= 0 && idx < (int)g_saveLoad.files.size())
+                        {
+                            const bool sameRow = (idx == g_saveLoad.lastClickedRow);
+                            const bool fast = (g_saveLoad.clickClock.getElapsedTime().asMilliseconds() < 350);
+                            g_saveLoad.lastClickedRow = idx;
+                            g_saveLoad.clickClock.restart();
+
+                            g_saveLoad.selected = idx;
+
+                            if (g_saveLoad.mode == SaveLoadMode::Load && sameRow && fast) {
+                                if (doLoadSelected()) g_saveLoad.open = false;
+                            }
+                        }
+                        continue;
+                    }
+
+                    // Click buttons
+                    const auto btns = buttonRects();
+                    if (btns[0].contains(mouse)) { // Delete
+                        doDeleteSelected();
+                        continue;
+                    }
+                    if (btns[1].contains(mouse)) { // Overwrite/Cancel
+                        if (g_saveLoad.mode == SaveLoadMode::Load) {
+                            g_saveLoad.open = false; // Cancel
+                        } else {
+                            doSaveOverwrite();
+                        }
+                        continue;
+                    }
+                    if (btns[2].contains(mouse)) { // Save New / Load
+                        if (g_saveLoad.mode == SaveLoadMode::Load) {
+                            if (doLoadSelected()) g_saveLoad.open = false;
+                        } else {
+                            doSaveNew();
+                        }
+                        continue;
+                    }
+                }
+                continue;
+            }
+
+            // Menu open => swallow everything else
+            continue;
+        }
+
+        // =========================
+        // NORMAL GAME INPUT
+        // =========================
+        if (const auto* key = event->getIf<sf::Event::KeyPressed>())
+        {
+            if (key->scancode == sf::Keyboard::Scancode::Escape) {
                 m_context->m_states->PopCurrent();
-                std::cout << "Popped current State\n";
                 return;
             }
-            else if (keyPressed->scancode == sf::Keyboard::Scancode::Z)
-            {
 
-                if (m_game && m_game->undo())
-                {
+            // Save/Load hotkeys (linked to the same UI as the buttons)
+            if (key->control && key->scancode == sf::Keyboard::Scancode::S) { openSaveMenu(); continue; }
+            if (key->control && key->scancode == sf::Keyboard::Scancode::L) { openLoadMenu(); continue; }
+            if (key->scancode == sf::Keyboard::Scancode::S) { openSaveMenu(); continue; }
+            if (key->scancode == sf::Keyboard::Scancode::L) { openLoadMenu(); continue; }
+
+            if (key->scancode == sf::Keyboard::Scancode::Z) {
+                if (m_game && m_game->undo()) {
                     rebuildStonesFromGame();
+                    maybeRunAITurn();
                 }
+                continue;
             }
-            else if (keyPressed->scancode == sf::Keyboard::Scancode::Y)
-            {
 
-                if (m_game && m_game->redo())
-                {
+            if (key->scancode == sf::Keyboard::Scancode::Y) {
+                if (m_game && m_game->redo()) {
                     rebuildStonesFromGame();
+                    maybeRunAITurn();
                 }
+                continue;
             }
-            else if (keyPressed->scancode == sf::Keyboard::Scancode::P)
-            {
 
-                if (m_game)
-                {
-                    bool finished = m_game->pass();
+            if (key->scancode == sf::Keyboard::Scancode::P) {
+                if (m_game) {
+                    if (isAIMode() && m_game->getTurn() != humanColor()) {
+                        setNotification("Please wait for AI to move.");
+                        continue;
+                    }
+
                     m_passSound.play();
+                    bool finished = m_game->pass();
                     rebuildStonesFromGame();
-                    if (finished)
-                    {
 
-                        auto [blackScore, whiteScore] = m_game->calculateFinalScore();
-
-                        std::string msg;
-
-                        if (blackScore > whiteScore)
-                        {
-                            float diff = blackScore - whiteScore;
-                            msg = "Black wins by " + std::to_string(diff) +
-                                  " points.\nBlack: " + std::to_string(blackScore) +
-                                  " | White: " + std::to_string(whiteScore);
-                        }
-                        else if (whiteScore > blackScore)
-                        {
-                            float diff = whiteScore - blackScore;
-                            msg = "White wins by " + std::to_string(diff) +
-                                  " points.\nBlack: " + std::to_string(blackScore) +
-                                  " | White: " + std::to_string(whiteScore);
-                        }
-                        else
-                        {
-                            msg = "It's a draw!\nBoth players: " + std::to_string(blackScore);
-                        }
-                        setNotification(msg); // NEW
-                        m_context->m_states->Add(
-                            std::make_unique<PauseState>(
-                                m_context,
-                                PauseState::Mode::GameOver,
-                                msg),
-                            false);
-                    }
+                    if (finished) handleGameOver();
+                    else maybeRunAITurn();
                 }
+                continue;
             }
         }
-        else if (const auto *mouseMoved = event->getIf<sf::Event::MouseMoved>())
+        else if (const auto* mm = event->getIf<sf::Event::MouseMoved>())
         {
-            sf::Vector2f mousePos(
-                static_cast<float>(mouseMoved->position.x),
-                static_cast<float>(mouseMoved->position.y));
-
-            m_undoHovered = m_undoButtonBox.getGlobalBounds().contains(mousePos);
-            m_redoHovered = m_redoButtonBox.getGlobalBounds().contains(mousePos);
-            m_passHovered = m_passButtonBox.getGlobalBounds().contains(mousePos);
+            sf::Vector2f mousePos((float)mm->position.x, (float)mm->position.y);
+            m_undoHovered  = m_undoButtonBox.getGlobalBounds().contains(mousePos);
+            m_redoHovered  = m_redoButtonBox.getGlobalBounds().contains(mousePos);
+            m_passHovered  = m_passButtonBox.getGlobalBounds().contains(mousePos);
             m_pauseHovered = m_pauseButtonBox.getGlobalBounds().contains(mousePos);
-            m_saveHovered = m_saveButtonBox.getGlobalBounds().contains(mousePos);
-            m_loadHovered = m_loadButtonBox.getGlobalBounds().contains(mousePos);
+            m_saveHovered  = m_saveButtonBox.getGlobalBounds().contains(mousePos);
+            m_loadHovered  = m_loadButtonBox.getGlobalBounds().contains(mousePos);
         }
-        else if (const auto *mouseBtn = event->getIf<sf::Event::MouseButtonPressed>())
+        else if (const auto* mb = event->getIf<sf::Event::MouseButtonPressed>())
         {
-            if (mouseBtn->button == sf::Mouse::Button::Left)
+            if (mb->button == sf::Mouse::Button::Left)
             {
-                sf::Vector2f mousePosF(
-                    static_cast<float>(mouseBtn->position.x),
-                    static_cast<float>(mouseBtn->position.y));
-                sf::Vector2i mousePos(mouseBtn->position.x, mouseBtn->position.y);
+                sf::Vector2f mousePosF((float)mb->position.x, (float)mb->position.y);
+                sf::Vector2i mousePos(mb->position.x, mb->position.y);
 
-                if (m_undoButtonBox.getGlobalBounds().contains(mousePosF))
-                {
-                    if (m_game && m_game->undo())
-                    {
+                if (m_undoButtonBox.getGlobalBounds().contains(mousePosF)) {
+                    if (m_game && m_game->undo()) {
                         rebuildStonesFromGame();
+                        maybeRunAITurn();
                     }
                     continue;
                 }
 
-                if (m_redoButtonBox.getGlobalBounds().contains(mousePosF))
-                {
-                    if (m_game && m_game->redo())
-                    {
+                if (m_redoButtonBox.getGlobalBounds().contains(mousePosF)) {
+                    if (m_game && m_game->redo()) {
                         rebuildStonesFromGame();
+                        maybeRunAITurn();
                     }
                     continue;
                 }
 
-                if (m_passButtonBox.getGlobalBounds().contains(mousePosF))
-                {
-                    if (m_game)
-                    {
+                if (m_passButtonBox.getGlobalBounds().contains(mousePosF)) {
+                    if (m_game) {
+                        if (isAIMode() && m_game->getTurn() != humanColor()) {
+                            setNotification("Please wait for AI to move.");
+                            continue;
+                        }
+
                         m_passSound.play();
                         bool finished = m_game->pass();
                         rebuildStonesFromGame();
-                        if (finished)
-                        {
 
-                            auto [blackScore, whiteScore] = m_game->calculateFinalScore();
-
-                            std::string msg;
-
-                            if (blackScore > whiteScore)
-                            {
-                                float diff = blackScore - whiteScore;
-                                msg = "Black wins by " + std::to_string(diff) +
-                                      " points.\nBlack: " + std::to_string(blackScore) +
-                                      " | White: " + std::to_string(whiteScore);
-                            }
-                            else if (whiteScore > blackScore)
-                            {
-                                float diff = whiteScore - blackScore;
-                                msg = "White wins by " + std::to_string(diff) +
-                                      " points.\nBlack: " + std::to_string(blackScore) +
-                                      " | White: " + std::to_string(whiteScore);
-                            }
-                            else
-                            {
-                                msg = "It's a draw!\nBoth players: " + std::to_string(blackScore);
-                            }
-                            setNotification(msg); // NEW
-                            m_winSound.play();
-                            m_context->m_states->Add(
-                                std::make_unique<PauseState>(
-                                    m_context,
-                                    PauseState::Mode::GameOver,
-                                    msg),
-                                false);
-                        }
+                        if (finished) handleGameOver();
+                        else maybeRunAITurn();
                     }
                     continue;
                 }
 
-                if (m_pauseButtonBox.getGlobalBounds().contains(mousePosF))
-                {
+                if (m_pauseButtonBox.getGlobalBounds().contains(mousePosF)) {
                     m_context->m_states->Add(
                         std::make_unique<PauseState>(m_context, PauseState::Mode::Paused),
                         false);
-                }
-                if (m_saveButtonBox.getGlobalBounds().contains(mousePosF))
-                {
-                    if (m_game)
-                    {
-                        if (m_game->saveToFile("savegame.txt"))
-                        {
-                            std::cout << "Game saved.\n";
-                        }
-                        else
-                        {
-                            std::cout << "Failed to save game.\n";
-                        }
-                    }
                     continue;
                 }
 
-                if (m_loadButtonBox.getGlobalBounds().contains(mousePosF))
-                {
-                    if (m_game)
-                    {
-                        if (m_game->loadFromFile("savegame.txt"))
-                        {
-                            std::cout << "Game loaded.\n";
-                            rebuildStonesFromGame();
-                        }
-                        else
-                        {
-                            std::cout << "Failed to load game.\n";
-                        }
-                    }
+                // Save/Load buttons -> open menus (multi-file)
+                if (m_saveButtonBox.getGlobalBounds().contains(mousePosF)) {
+                    openSaveMenu();
+                    continue;
+                }
+
+                if (m_loadButtonBox.getGlobalBounds().contains(mousePosF)) {
+                    openLoadMenu();
                     continue;
                 }
 
@@ -444,237 +863,12 @@ void MainBoard::ProcessInput()
     }
 }
 
-void MainBoard::Update(sf::Time)
-{
-    if (m_context->m_requestBoardRestart)
-    {
-        m_context->m_requestBoardRestart = false;
-        resetGame();
-    }
-
-    auto normalColor = sf::Color(200, 200, 200);
-    auto hoverColor = sf::Color(230, 230, 230);
-
-    m_undoButtonBox.setFillColor(m_undoHovered ? hoverColor : normalColor);
-    m_redoButtonBox.setFillColor(m_redoHovered ? hoverColor : normalColor);
-    m_passButtonBox.setFillColor(m_passHovered ? hoverColor : normalColor);
-    m_pauseButtonBox.setFillColor(m_pauseHovered ? hoverColor : normalColor);
-    m_saveButtonBox.setFillColor(m_saveHovered ? hoverColor : normalColor);
-    m_loadButtonBox.setFillColor(m_loadHovered ? hoverColor : normalColor);
-
-    if (m_showNotification)
-    {
-        float elapsed = m_notificationClock.getElapsedTime().asSeconds();
-        if (elapsed > m_notificationDuration)
-        {
-            m_showNotification = false;
-            m_notificationText.clear();
-        }
-    }
-}
-
-void MainBoard::Draw()
-{
-    sf::Color boardColor;
-    sf::Color gridColor;
-
-    switch (m_context->m_boardTheme)
-    {
-    case BoardTheme::Classic:
-        boardColor = sf::Color(210, 164, 80); // light wood fallback
-        gridColor = sf::Color::Black;
-        break;
-
-    case BoardTheme::Dark:
-        boardColor = sf::Color(40, 40, 40);   // dark matte fallback
-        gridColor = sf::Color(200, 200, 200); // light grid
-        break;
-    }
-
-    // Apply grid color
-    for (auto &v : m_gridLines)
-        v.color = gridColor;
-
-    // Apply texture if available; otherwise use flat color
-    if (m_context->m_boardTheme == BoardTheme::Classic && m_hasClassicTexture)
-    {
-        m_boardBackground.setTexture(&m_boardTextureClassic);
-        // optional: tint texture a bit
-        m_boardBackground.setFillColor(sf::Color::White);
-    }
-    else if (m_context->m_boardTheme == BoardTheme::Dark && m_hasDarkTexture)
-    {
-        m_boardBackground.setTexture(&m_boardTextureDark);
-        m_boardBackground.setFillColor(sf::Color::White);
-    }
-    else
-    {
-        // No texture available → flat color
-        m_boardBackground.setTexture(nullptr);
-        m_boardBackground.setFillColor(boardColor);
-    }
-
-    m_context->m_window->draw(m_boardBackground);
-
-    if (!m_gridLines.empty())
-    {
-        m_context->m_window->draw(
-            m_gridLines.data(),
-            m_gridLines.size(),
-            sf::PrimitiveType::Lines);
-    }
-
-    for (const auto &stone : m_stones)
-        m_context->m_window->draw(stone);
-
-    auto winSize = m_context->m_window->getSize();
-    {
-        sf::RectangleShape sidePanel;
-        sidePanel.setSize({160.f, 340.f});
-        sidePanel.setFillColor(sf::Color(40, 40, 40, 220));
-        sidePanel.setPosition({static_cast<float>(winSize.x) - 170.f, 30.f});
-        sidePanel.setOutlineThickness(1.f);
-        sidePanel.setOutlineColor(sf::Color(80, 80, 80));
-
-        m_context->m_window->draw(sidePanel);
-    }
-
-    m_context->m_window->draw(m_undoButtonBox);
-    m_context->m_window->draw(m_redoButtonBox);
-    m_context->m_window->draw(m_passButtonBox);
-    m_context->m_window->draw(m_pauseButtonBox);
-    m_context->m_window->draw(m_saveButtonBox);
-    m_context->m_window->draw(m_loadButtonBox);
-
-    const sf::Font *fontPtr = nullptr;
-    fontPtr = &m_context->m_assets->GetFont(MAIN_FONT);
-    const sf::Font &font = *fontPtr;
-
-    if (m_game)
-    {
-        PieceColor current = m_game->getTurn();
-        std::string turnStr;
-
-        if (current == BLACK)
-            turnStr = "Turn: Black";
-        else if (current == WHITE)
-            turnStr = "Turn: White";
-        else
-            turnStr = "Turn: -";
-
-        sf::RectangleShape turnPanel;
-        turnPanel.setSize({160.f, 40.f});
-        turnPanel.setFillColor(sf::Color(30, 30, 30, 220));
-        turnPanel.setOutlineThickness(1.f);
-        turnPanel.setOutlineColor(sf::Color(80, 80, 80));
-        turnPanel.setPosition({20.f, 20.f});
-        m_context->m_window->draw(turnPanel);
-
-        sf::Text turnText(font, turnStr, 18);
-        turnText.setFillColor(sf::Color::White);
-        turnText.setStyle(sf::Text::Bold);
-
-        turnText.setPosition({35.f, 25.f});
-        m_context->m_window->draw(turnText);
-
-        sf::CircleShape turnStone(10.f);
-        turnStone.setOrigin({10.f, 10.f});
-        if (current == BLACK)
-        {
-            turnStone.setFillColor(sf::Color::Black);
-            turnStone.setOutlineThickness(1.f);
-            turnStone.setOutlineColor(sf::Color(220, 220, 220));
-        }
-        else if (current == WHITE)
-        {
-            turnStone.setFillColor(sf::Color::White);
-            turnStone.setOutlineThickness(1.f);
-            turnStone.setOutlineColor(sf::Color::Black);
-        }
-
-        turnStone.setPosition({160.f, 40.f});
-        m_context->m_window->draw(turnStone);
-    }
-
-    auto drawCenteredTextOnButton = [&](const sf::RectangleShape &button,
-                                        const std::string &str)
-    {
-        sf::Text text(font, str, 18);
-        auto bounds = text.getLocalBounds();
-        text.setOrigin(bounds.getCenter());
-        text.setFillColor(sf::Color::Black);
-
-        auto pos = button.getPosition();
-        auto size = button.getSize();
-        sf::Vector2f center(pos.x + size.x * 0.5f,
-                            pos.y + size.y * 0.5f);
-
-        text.setPosition(center);
-        m_context->m_window->draw(text);
-    };
-
-    drawCenteredTextOnButton(m_undoButtonBox, "Undo");
-    drawCenteredTextOnButton(m_redoButtonBox, "Redo");
-    drawCenteredTextOnButton(m_passButtonBox, "Pass");
-    drawCenteredTextOnButton(m_pauseButtonBox, "Pause");
-    drawCenteredTextOnButton(m_saveButtonBox, "Save");
-    drawCenteredTextOnButton(m_loadButtonBox, "Load");
-
-    {
-        sf::RectangleShape bottomBar;
-        bottomBar.setSize({static_cast<float>(winSize.x), 30.f});
-        bottomBar.setPosition({0.f,
-                               static_cast<float>(winSize.y) - bottomBar.getSize().y});
-        bottomBar.setFillColor(sf::Color(30, 30, 30, 230));
-
-        m_context->m_window->draw(bottomBar);
-
-        sf::Text hint(
-            font,
-            "ESC: Back | Click board to place stone | Z: Undo / Y: Redo / P: Pass",
-            16);
-        // Notification bar (if any)
-        if (m_showNotification && !m_notificationText.empty())
-        {
-            sf::RectangleShape notifBar;
-            notifBar.setSize({static_cast<float>(winSize.x), 24.f});
-            notifBar.setPosition(
-                {0.f, static_cast<float>(winSize.y) - 30.f - notifBar.getSize().y});
-            // 30.f = height of bottomBar
-
-            notifBar.setFillColor(sf::Color(50, 50, 50, 230));
-            notifBar.setOutlineThickness(1.f);
-            notifBar.setOutlineColor(sf::Color(200, 200, 0, 180)); // yellow-ish
-
-            m_context->m_window->draw(notifBar);
-
-            sf::Text notifText(font, m_notificationText, 16);
-            notifText.setFillColor(sf::Color(255, 255, 180));
-            notifText.setStyle(sf::Text::Bold);
-
-            auto nb = notifText.getLocalBounds();
-            notifText.setOrigin({nb.position.x, nb.position.y});
-            notifText.setPosition({10.f,
-                                   static_cast<float>(winSize.y) - 30.f - notifBar.getSize().y + 4.f});
-
-            m_context->m_window->draw(notifText);
-        }
-
-        hint.setFillColor(sf::Color::White);
-        hint.setStyle(sf::Text::Bold);
-
-        auto hb = hint.getLocalBounds();
-        hint.setOrigin({hb.position.x, hb.position.y});
-        hint.setPosition({10.f,
-                          static_cast<float>(winSize.y) - bottomBar.getSize().y + 5.f});
-
-        m_context->m_window->draw(hint);
-    }
-}
 
 void MainBoard::resetGame()
 {
     m_game = std::make_unique<Game>(new Board());
     m_stones.clear();
     rebuildStonesFromGame();
+    maybeRunAITurn();
 }
+
