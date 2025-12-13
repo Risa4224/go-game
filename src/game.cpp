@@ -4,6 +4,11 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <cctype>
+#include <cstddef>
+#include <cstdint>
+#include <unordered_map>
+#include <vector>
 #include <queue>
 #include <sstream>
 
@@ -21,6 +26,51 @@ namespace {
     };
     thread_local Stamp g_seenLib;
     thread_local Stamp g_seenStone;
+
+    struct MoveRec {
+        PieceColor color = NONE;
+        int x = -1;
+        int y = -1;
+        bool isPass = false;
+    };
+
+    struct BaseState {
+        Board board;
+        PieceColor turn = BLACK;
+        int black_captures = 0;
+        int white_captures = 0;
+        int consecutive_passes = 0;
+        Board koRefBoard;
+        bool hasKoRef = false;
+        std::array<std::uint8_t, BOARD_CELLS> deadMark{};
+    };
+
+    struct Timeline {
+        BaseState base;
+        std::vector<MoveRec> moves;
+        std::size_t cursor = 0; // number of moves already applied
+        bool record = true;     // disabled during replay
+    };
+
+    static std::unordered_map<const Game*, Timeline> g_timeline;
+
+    static Timeline* findTimeline(const Game* g) {
+        auto it = g_timeline.find(g);
+        if (it == g_timeline.end()) return nullptr;
+        return &it->second;
+    }
+
+    static Timeline& ensureTimeline(const Game* g) {
+        return g_timeline.try_emplace(g).first->second;
+    }
+
+    static bool isUnsignedIntToken(const std::string& s) {
+        if (s.empty()) return false;
+        for (unsigned char ch : s) {
+            if (!std::isdigit(ch)) return false;
+        }
+        return true;
+    }
 }
 
 Game::Game(const Game& other)
@@ -72,11 +122,34 @@ Game& Game::operator=(const Game& other) {
 Game::Game(Board* b)
     : board(b), turn(BLACK)
 {
+    // Ensure clean initial state (important for load/replay)
+    black_captures = 0;
+    white_captures = 0;
+    consecutive_passes = 0;
+
+    history.clear();
+    future.clear();
+
     groupAt.fill(-1);
     m_deadMark.fill(0);
     m_hasKoRef = false;
     m_koRefBoard = *board;
     rebuildGroupsFromBoard(); // an toàn nếu board không rỗng
+
+    // Initialize timeline (used by save/load + undo/redo without huge snapshots)
+    auto& tl = ensureTimeline(this);
+    tl.record = true;
+    tl.moves.clear();
+    tl.cursor = 0;
+
+    tl.base.board = *board;
+    tl.base.turn = turn;
+    tl.base.black_captures = black_captures;
+    tl.base.white_captures = white_captures;
+    tl.base.consecutive_passes = consecutive_passes;
+    tl.base.koRefBoard = m_koRefBoard;
+    tl.base.hasKoRef = m_hasKoRef;
+    tl.base.deadMark.fill(0);
 }
 
 PieceColor Game::oppositeColor(PieceColor input) const {
@@ -321,27 +394,42 @@ bool Game::placeStone(int x, int y) {
 
     // record info for UI
     m_lastCaptures = captures;
-    m_lastKoThreat = (captures == 1);
+    // UI hint: detect a real simple-ko (opponent immediate recapture is forbidden due to ko)
+    m_lastKoThreat = false;
+    if (captures == 1) {
+        const PieceColor opp = oppositeColor(current_color);
+
+        int cx = -1, cy = -1;
+        for (int yy = 0; yy < BOARD_SIZE && cx == -1; ++yy) {
+            for (int xx = 0; xx < BOARD_SIZE; ++xx) {
+                if (xx == x && yy == y) continue;
+                if (board_backup.getPiece(xx, yy) == opp && board->getPiece(xx, yy) == NONE) {
+                    cx = xx;
+                    cy = yy;
+                    break;
+                }
+            }
+        }
+
+        if (cx != -1) {
+            Game tmp(*this); // copy state after this move (copy ctor disables history)
+            tmp.turn = opp;
+            tmp.m_koRefBoard = board_backup;
+            tmp.m_hasKoRef = true;
+
+            const bool ok = tmp.placeStone(cx, cy);
+            m_lastKoThreat = (!ok && tmp.m_lastKoViolation);
+        }
+    }
 
     // record history only for main game instance
     if (m_enableHistory) {
-        // save PRE-move snapshot (board_backup, groups_backup, groupAt_backup, captures_backup, ...)
-        Game snapshot(new Board(board_backup));
-        snapshot.turn = current_color;
-        snapshot.black_captures = black_backup;
-        snapshot.white_captures = white_backup;
-        snapshot.consecutive_passes = passes_backup;
-        snapshot.groups = groups_backup;
-        snapshot.groupAt = groupAt_backup;
-        snapshot.history.clear();
-        snapshot.future.clear();
-        snapshot.m_enableHistory = false;
-        snapshot.m_koRefBoard = koRef_backup;
-        snapshot.m_hasKoRef = hasKoRef_backup;
-        snapshot.m_deadMark = deadMark_backup;
-
-        history.push_back(std::move(snapshot));
-        future.clear();
+        if (auto* tl = findTimeline(this); tl && tl->record) {
+            // If we undid some moves, drop the redo tail before recording a new move
+            if (tl->cursor < tl->moves.size()) tl->moves.resize(tl->cursor);
+            tl->moves.push_back(MoveRec{current_color, x, y, false});
+            tl->cursor = tl->moves.size();
+        }
     }
 
     // update ko reference for the next player (board position before this move)
@@ -363,8 +451,11 @@ bool Game::pass() {
     m_lastKoThreat    = false;
 
     if (m_enableHistory) {
-        history.push_back(*this); // snapshot (copy ctor disables history)
-        future.clear();
+        if (auto* tl = findTimeline(this); tl && tl->record) {
+            if (tl->cursor < tl->moves.size()) tl->moves.resize(tl->cursor);
+            tl->moves.push_back(MoveRec{turn, -1, -1, true});
+            tl->cursor = tl->moves.size();
+        }
     }
 
     // A pass counts as a move for ko purposes under simple-ko:
@@ -382,24 +473,105 @@ bool Game::pass() {
 }
 
 bool Game::undo() {
-    if (history.empty()) return false;
+    auto* tl = findTimeline(this);
+    if (!tl) return false;
+    if (tl->cursor == 0) return false;
 
-    Game prevState = history.back();
-    history.pop_back();
+    --tl->cursor;
 
-    future.push_back(*this);
-    *this = prevState; // operator= keeps m_enableHistory of main game
+    const bool oldRecord = tl->record;
+    tl->record = false;
+
+    // Reset to base state, then replay moves up to the cursor.
+    *board = tl->base.board;
+    turn = tl->base.turn;
+    black_captures = tl->base.black_captures;
+    white_captures = tl->base.white_captures;
+    consecutive_passes = tl->base.consecutive_passes;
+    m_deadMark = tl->base.deadMark;
+    m_koRefBoard = tl->base.koRefBoard;
+    m_hasKoRef = tl->base.hasKoRef;
+
+    // We no longer use snapshot history/future (kept for UI compatibility).
+    history.clear();
+    future.clear();
+
+    groups.clear();
+    groupAt.fill(-1);
+    rebuildGroupsFromBoard();
+
+    // reset last-move info
+    m_lastCaptures    = 0;
+    m_lastInvalid     = false;
+    m_lastSuicide     = false;
+    m_lastKoViolation = false;
+    m_lastKoThreat    = false;
+
+    for (std::size_t i = 0; i < tl->cursor; ++i) {
+        const auto& mv = tl->moves[i];
+        turn = mv.color;
+        if (mv.isPass) {
+            (void)pass();
+        } else {
+            if (!placeStone(mv.x, mv.y)) {
+                tl->record = oldRecord;
+                return false;
+            }
+        }
+    }
+
+    tl->record = oldRecord;
     return true;
 }
 
 bool Game::redo() {
-    if (future.empty()) return false;
+    auto* tl = findTimeline(this);
+    if (!tl) return false;
+    if (tl->cursor >= tl->moves.size()) return false;
 
-    Game nextState = future.back();
-    future.pop_back();
+    ++tl->cursor;
 
-    history.push_back(*this);
-    *this = nextState;
+    const bool oldRecord = tl->record;
+    tl->record = false;
+
+    // Reset to base state, then replay moves up to the cursor.
+    *board = tl->base.board;
+    turn = tl->base.turn;
+    black_captures = tl->base.black_captures;
+    white_captures = tl->base.white_captures;
+    consecutive_passes = tl->base.consecutive_passes;
+    m_deadMark = tl->base.deadMark;
+    m_koRefBoard = tl->base.koRefBoard;
+    m_hasKoRef = tl->base.hasKoRef;
+
+    history.clear();
+    future.clear();
+
+    groups.clear();
+    groupAt.fill(-1);
+    rebuildGroupsFromBoard();
+
+    // reset last-move info
+    m_lastCaptures    = 0;
+    m_lastInvalid     = false;
+    m_lastSuicide     = false;
+    m_lastKoViolation = false;
+    m_lastKoThreat    = false;
+
+    for (std::size_t i = 0; i < tl->cursor; ++i) {
+        const auto& mv = tl->moves[i];
+        turn = mv.color;
+        if (mv.isPass) {
+            (void)pass();
+        } else {
+            if (!placeStone(mv.x, mv.y)) {
+                tl->record = oldRecord;
+                return false;
+            }
+        }
+    }
+
+    tl->record = oldRecord;
     return true;
 }
 
@@ -556,15 +728,40 @@ bool Game::saveToFile(const std::string& filename) const {
     std::ofstream out(filename);
     if (!out.is_open()) return false;
 
+    // V2 format: base state + move list + cursor (for undo/redo)
+    out << "GO_SAVE_V2\n";
     out << BOARD_SIZE << '\n';
-    out << static_cast<int>(turn) << ' '
-        << black_captures << ' '
-        << white_captures << ' '
-        << consecutive_passes << '\n';
+
+    const Timeline* tl = findTimeline(this);
+
+    // If timeline is missing (shouldn't happen for the main game), fall back to current state.
+    BaseState base;
+    std::size_t cursor = 0;
+    std::size_t nMoves = 0;
+
+    if (tl) {
+        base = tl->base;
+        cursor = tl->cursor;
+        nMoves = tl->moves.size();
+    } else {
+        base.board = *board;
+        base.turn = turn;
+        base.black_captures = black_captures;
+        base.white_captures = white_captures;
+        base.consecutive_passes = consecutive_passes;
+        base.koRefBoard = *board;
+        base.hasKoRef = false;
+        base.deadMark.fill(0);
+    }
+
+    out << static_cast<int>(base.turn) << ' '
+        << base.black_captures << ' '
+        << base.white_captures << ' '
+        << base.consecutive_passes << '\n';
 
     for (int y = 0; y < BOARD_SIZE; ++y) {
         for (int x = 0; x < BOARD_SIZE; ++x) {
-            PieceColor p = board->getPiece(x, y);
+            PieceColor p = base.board.getPiece(x, y);
             char c = '.';
             if (p == BLACK) c = 'B';
             else if (p == WHITE) c = 'W';
@@ -573,41 +770,16 @@ bool Game::saveToFile(const std::string& filename) const {
         out << '\n';
     }
 
-    out << history.size() << '\n';
-    for (const Game& st : history) {
-        out << static_cast<int>(st.turn) << ' '
-            << st.black_captures << ' '
-            << st.white_captures << ' '
-            << st.consecutive_passes << '\n';
+    out << cursor << ' ' << nMoves << '\n';
 
-        for (int y = 0; y < BOARD_SIZE; ++y) {
-            for (int x = 0; x < BOARD_SIZE; ++x) {
-                PieceColor p = st.board->getPiece(x, y);
-                char c = '.';
-                if (p == BLACK) c = 'B';
-                else if (p == WHITE) c = 'W';
-                out << c;
+    if (tl) {
+        for (const auto& mv : tl->moves) {
+            const char cc = (mv.color == BLACK) ? 'B' : 'W';
+            if (mv.isPass) {
+                out << cc << " P\n";
+            } else {
+                out << cc << ' ' << mv.x << ' ' << mv.y << '\n';
             }
-            out << '\n';
-        }
-    }
-
-    out << future.size() << '\n';
-    for (const Game& st : future) {
-        out << static_cast<int>(st.turn) << ' '
-            << st.black_captures << ' '
-            << st.white_captures << ' '
-            << st.consecutive_passes << '\n';
-
-        for (int y = 0; y < BOARD_SIZE; ++y) {
-            for (int x = 0; x < BOARD_SIZE; ++x) {
-                PieceColor p = st.board->getPiece(x, y);
-                char c = '.';
-                if (p == BLACK) c = 'B';
-                else if (p == WHITE) c = 'W';
-                out << c;
-            }
-            out << '\n';
         }
     }
 
@@ -618,128 +790,169 @@ bool Game::loadFromFile(const std::string& filename) {
     std::ifstream in(filename);
     if (!in.is_open()) return false;
 
+    std::string head;
+    if (!(in >> head)) return false;
+
+    // ---------------------------
+    // New compact format (V2)
+    // ---------------------------
+    if (head == "GO_SAVE_V2") {
+        int boardSize = 0;
+        if (!(in >> boardSize) || boardSize != BOARD_SIZE) return false;
+
+        int baseTurnInt = 0;
+        int baseBlack = 0, baseWhite = 0, basePass = 0;
+        if (!(in >> baseTurnInt >> baseBlack >> baseWhite >> basePass)) return false;
+
+        std::string line;
+        std::getline(in, line); // consume newline
+
+        Board baseBoard;
+        baseBoard.clear();
+        for (int y = 0; y < BOARD_SIZE; ++y) {
+            if (!std::getline(in, line)) return false;
+            if (static_cast<int>(line.size()) < BOARD_SIZE) return false;
+            for (int x = 0; x < BOARD_SIZE; ++x) {
+                char c = line[x];
+                if (c == 'B') baseBoard.setPiece(x, y, BLACK);
+                else if (c == 'W') baseBoard.setPiece(x, y, WHITE);
+                else baseBoard.setPiece(x, y, NONE);
+            }
+        }
+
+        std::size_t cursor = 0, nMoves = 0;
+        if (!(in >> cursor >> nMoves)) return false;
+        if (cursor > nMoves) return false;
+
+        std::vector<MoveRec> moves;
+        moves.reserve(nMoves);
+
+        for (std::size_t i = 0; i < nMoves; ++i) {
+            char colChar = 0;
+            if (!(in >> colChar)) return false;
+            PieceColor col = (colChar == 'B') ? BLACK : WHITE;
+
+            std::string tok;
+            if (!(in >> tok)) return false;
+
+            if (tok == "P") {
+                moves.push_back(MoveRec{col, -1, -1, true});
+            } else {
+                int x = 0;
+                int y = 0;
+                try { x = std::stoi(tok); } catch (...) { return false; }
+                if (!(in >> y)) return false;
+                moves.push_back(MoveRec{col, x, y, false});
+            }
+        }
+
+        auto& tl = ensureTimeline(this);
+        tl.record = true;
+        tl.moves = std::move(moves);
+        tl.cursor = cursor;
+
+        tl.base.board = baseBoard;
+        tl.base.turn = static_cast<PieceColor>(baseTurnInt);
+        tl.base.black_captures = baseBlack;
+        tl.base.white_captures = baseWhite;
+        tl.base.consecutive_passes = basePass;
+        tl.base.deadMark.fill(0);
+        tl.base.koRefBoard = baseBoard;
+        tl.base.hasKoRef = false;
+
+        // Replay to cursor (without recording)
+        const bool oldRecord = tl.record;
+        tl.record = false;
+
+        *board = tl.base.board;
+        turn = tl.base.turn;
+        black_captures = tl.base.black_captures;
+        white_captures = tl.base.white_captures;
+        consecutive_passes = tl.base.consecutive_passes;
+        m_deadMark = tl.base.deadMark;
+        m_koRefBoard = tl.base.koRefBoard;
+        m_hasKoRef = tl.base.hasKoRef;
+
+        history.clear();
+        future.clear();
+        groups.clear();
+        groupAt.fill(-1);
+        rebuildGroupsFromBoard();
+
+        // reset last-move info
+        m_lastCaptures    = 0;
+        m_lastInvalid     = false;
+        m_lastSuicide     = false;
+        m_lastKoViolation = false;
+        m_lastKoThreat    = false;
+
+        for (std::size_t i = 0; i < tl.cursor; ++i) {
+            const auto& mv = tl.moves[i];
+            turn = mv.color;
+            if (mv.isPass) {
+                (void)pass();
+            } else {
+                if (!placeStone(mv.x, mv.y)) {
+                    tl.record = oldRecord;
+                    return false;
+                }
+            }
+        }
+
+        tl.record = oldRecord;
+        return true;
+    }
+
+    // ---------------------------
+    // Legacy format (V1): load current board only and ignore snapshot history/future.
+    // This keeps the file compatible, while avoiding huge memory usage.
+    // ---------------------------
+    if (!isUnsignedIntToken(head)) return false;
+
     int boardSize = 0;
-    if (!(in >> boardSize) || boardSize != BOARD_SIZE) return false;
+    try { boardSize = std::stoi(head); } catch (...) { return false; }
+    if (boardSize != BOARD_SIZE) return false;
 
     int turnInt = 0;
     if (!(in >> turnInt >> black_captures >> white_captures >> consecutive_passes)) return false;
     turn = static_cast<PieceColor>(turnInt);
 
     std::string line;
-    std::getline(in, line); // newline
+    std::getline(in, line); // consume newline
 
-    // read current board
     board->clear();
     for (int y = 0; y < BOARD_SIZE; ++y) {
-        if (!std::getline(in, line) || (int)line.size() < BOARD_SIZE) return false;
+        if (!std::getline(in, line)) return false;
+        if (static_cast<int>(line.size()) < BOARD_SIZE) return false;
         for (int x = 0; x < BOARD_SIZE; ++x) {
             char c = line[x];
-            PieceColor p = NONE;
-            if (c == 'B') p = BLACK;
-            else if (c == 'W') p = WHITE;
-            board->setPiece(x, y, p);
+            if (c == 'B') board->setPiece(x, y, BLACK);
+            else if (c == 'W') board->setPiece(x, y, WHITE);
+            else board->setPiece(x, y, NONE);
         }
     }
-
-    rebuildGroupsFromBoard();
-    m_deadMark.fill(0);
-
-    std::size_t historySize = 0;
-    if (!(in >> historySize)) { history.clear(); future.clear(); return true; }
-    std::getline(in, line);
 
     history.clear();
-    history.reserve(historySize);
-    Board lastPreMoveBoard;
-    bool hasLastPreMove = false;
-
-    for (std::size_t i = 0; i < historySize; ++i) {
-        int hTurnInt = 0, hBlack = 0, hWhite = 0, hPass = 0;
-        if (!(in >> hTurnInt >> hBlack >> hWhite >> hPass)) return false;
-        std::getline(in, line);
-
-        Board* snapBoard = new Board();
-        for (int y = 0; y < BOARD_SIZE; ++y) {
-            if (!std::getline(in, line) || (int)line.size() < BOARD_SIZE) { delete snapBoard; return false; }
-            for (int x = 0; x < BOARD_SIZE; ++x) {
-                char c = line[x];
-                PieceColor p = NONE;
-                if (c == 'B') p = BLACK;
-                else if (c == 'W') p = WHITE;
-                snapBoard->setPiece(x, y, p);
-            }
-        }
-
-        Game snapshot(snapBoard);
-        snapshot.turn = static_cast<PieceColor>(hTurnInt);
-        snapshot.black_captures = hBlack;
-        snapshot.white_captures = hWhite;
-        snapshot.consecutive_passes = hPass;
-        snapshot.history.clear();
-        snapshot.future.clear();
-        snapshot.m_enableHistory = false;
-        snapshot.m_deadMark.fill(0);
-        if (hasLastPreMove) {
-            snapshot.m_koRefBoard = lastPreMoveBoard;
-            snapshot.m_hasKoRef = true;
-        } else {
-            snapshot.m_koRefBoard = *snapshot.board;
-            snapshot.m_hasKoRef = false;
-        }
-        snapshot.rebuildGroupsFromBoard();
-
-        history.push_back(std::move(snapshot));
-        lastPreMoveBoard = *history.back().board;
-        hasLastPreMove = true;
-    }
-
-    std::size_t futureSize = 0;
-    if (!(in >> futureSize)) { future.clear(); return true; }
-    std::getline(in, line);
-
     future.clear();
-    future.reserve(futureSize);
+    m_deadMark.fill(0);
+    m_hasKoRef = false;
+    m_koRefBoard = *board;
+    rebuildGroupsFromBoard();
 
-    for (std::size_t i = 0; i < futureSize; ++i) {
-        int fTurnInt = 0, fBlack = 0, fWhite = 0, fPass = 0;
-        if (!(in >> fTurnInt >> fBlack >> fWhite >> fPass)) return false;
-        std::getline(in, line);
-
-        Board* snapBoard = new Board();
-        for (int y = 0; y < BOARD_SIZE; ++y) {
-            if (!std::getline(in, line) || (int)line.size() < BOARD_SIZE) { delete snapBoard; return false; }
-            for (int x = 0; x < BOARD_SIZE; ++x) {
-                char c = line[x];
-                PieceColor p = NONE;
-                if (c == 'B') p = BLACK;
-                else if (c == 'W') p = WHITE;
-                snapBoard->setPiece(x, y, p);
-            }
-        }
-
-        Game snapshot(snapBoard);
-        snapshot.turn = static_cast<PieceColor>(fTurnInt);
-        snapshot.black_captures = fBlack;
-        snapshot.white_captures = fWhite;
-        snapshot.consecutive_passes = fPass;
-        snapshot.history.clear();
-        snapshot.future.clear();
-        snapshot.m_enableHistory = false;
-        snapshot.m_deadMark.fill(0);
-        snapshot.m_koRefBoard = *snapshot.board;
-        snapshot.m_hasKoRef = false;
-        snapshot.rebuildGroupsFromBoard();
-
-        future.push_back(std::move(snapshot));
-    }
-
-    // Reconstruct ko reference from last history snapshot if available.
-    if (!history.empty()) {
-        m_koRefBoard = *history.back().board;
-        m_hasKoRef = true;
-    } else {
-        m_koRefBoard = *board;
-        m_hasKoRef = false;
+    // Reset timeline base to the loaded state (no undo/redo history for legacy files).
+    {
+        auto& tl = ensureTimeline(this);
+        tl.record = true;
+        tl.moves.clear();
+        tl.cursor = 0;
+        tl.base.board = *board;
+        tl.base.turn = turn;
+        tl.base.black_captures = black_captures;
+        tl.base.white_captures = white_captures;
+        tl.base.consecutive_passes = consecutive_passes;
+        tl.base.deadMark.fill(0);
+        tl.base.koRefBoard = *board;
+        tl.base.hasKoRef = false;
     }
 
     return true;
