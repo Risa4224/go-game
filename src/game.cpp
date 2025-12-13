@@ -71,6 +71,54 @@ namespace {
         }
         return true;
     }
+    // ---------------------------
+    // Zobrist hashing (fast ko)
+    // ---------------------------
+    static inline std::uint64_t splitmix64(std::uint64_t& x) {
+        std::uint64_t z = (x += 0x9e3779b97f4a7c15ULL);
+        z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ULL;
+        z = (z ^ (z >> 27)) * 0x94d049bb133111ebULL;
+        return z ^ (z >> 31);
+    }
+
+    static inline int zobristColorIndex(PieceColor c) {
+        // Map {WHITE, BLACK} -> {0, 1}
+        if (c == WHITE) return 0;
+        if (c == BLACK) return 1;
+        return -1;
+    }
+
+    static const std::array<std::array<std::uint64_t, 2>, BOARD_CELLS>& zobristTable() {
+        static const auto table = [] {
+            std::array<std::array<std::uint64_t, 2>, BOARD_CELLS> t{};
+            // Fixed seed -> deterministic (important for save/load reproducibility)
+            std::uint64_t seed = 0xC0FFEE1234ULL;
+            for (int i = 0; i < BOARD_CELLS; ++i) {
+                t[i][0] = splitmix64(seed); // WHITE
+                t[i][1] = splitmix64(seed); // BLACK
+            }
+            return t;
+        }();
+        return table;
+    }
+
+    static std::uint64_t computeBoardHash(const Board& b) {
+        const auto& Z = zobristTable();
+        std::uint64_t h = 0;
+        for (int y = 0; y < BOARD_SIZE; ++y) {
+            for (int x = 0; x < BOARD_SIZE; ++x) {
+                PieceColor p = b.getPiece(x, y);
+                const int idx = zobristColorIndex(p);
+                if (idx >= 0) {
+                    h ^= Z[encodePos(x, y)][idx];
+                }
+            }
+        }
+        return h;
+    }
+
+
+
 }
 
 Game::Game(const Game& other)
@@ -85,6 +133,8 @@ Game::Game(const Game& other)
       m_enableHistory(false),
       m_koRefBoard(other.m_koRefBoard),
       m_hasKoRef(other.m_hasKoRef),
+      m_boardHash(other.m_boardHash),
+      m_koRefHash(other.m_koRefHash),
       m_deadMark(other.m_deadMark),
       m_lastCaptures(other.m_lastCaptures),
       m_lastInvalid(other.m_lastInvalid),
@@ -107,6 +157,8 @@ Game& Game::operator=(const Game& other) {
     groupAt = other.groupAt;
     m_koRefBoard = other.m_koRefBoard;
     m_hasKoRef = other.m_hasKoRef;
+    m_boardHash = other.m_boardHash;
+    m_koRefHash = other.m_koRefHash;
     m_deadMark = other.m_deadMark;
 
     // IMPORTANT: keep this->m_enableHistory unchanged (main game must keep recording)
@@ -134,6 +186,8 @@ Game::Game(Board* b)
     m_deadMark.fill(0);
     m_hasKoRef = false;
     m_koRefBoard = *board;
+    m_boardHash = computeBoardHash(*board);
+    m_koRefHash = computeBoardHash(m_koRefBoard);
     rebuildGroupsFromBoard(); // an toàn nếu board không rỗng
 
     // Initialize timeline (used by save/load + undo/redo without huge snapshots)
@@ -166,6 +220,11 @@ bool Game::checkKO() const {
     // Simple ko (positional, 1-step): disallow a move that recreates the board position
     // from two plies ago (i.e., the board position before the last move).
     if (!m_hasKoRef) return false;
+
+    // Fast path (O(1)) using Zobrist hash.
+    if (m_boardHash != m_koRefHash) return false;
+
+    // Collision guard (extremely unlikely): verify full board only when hashes match.
     return board->isEqual(m_koRefBoard);
 }
 
@@ -231,8 +290,12 @@ int Game::removeGroupByIndex(int groupIdx) {
     auto& g = groups[groupIdx];
     const auto& locs = g.getLocations();
 
+    const int zidx = zobristColorIndex(g.getColor());
+    const auto& Z = zobristTable();
+
     int removed = 0;
     for (int id : locs) {
+        if (zidx >= 0) m_boardHash ^= Z[id][zidx];
         int x = decodeX(id);
         int y = decodeY(id);
         board->removePiece(x, y);
@@ -356,6 +419,8 @@ bool Game::placeStone(int x, int y) {
     const Board board_backup = *board;
     const Board koRef_backup = m_koRefBoard;
     const bool  hasKoRef_backup = m_hasKoRef;
+    const std::uint64_t boardHash_backup = m_boardHash;
+    const std::uint64_t koRefHash_backup = m_koRefHash;
     const auto  deadMark_backup = m_deadMark;
     const auto groups_backup = groups;
     const auto groupAt_backup = groupAt;
@@ -365,6 +430,10 @@ bool Game::placeStone(int x, int y) {
 
     // do move
     board->setPiece(x, y, current_color);
+    {
+        const int zidx = zobristColorIndex(current_color);
+        if (zidx >= 0) m_boardHash ^= zobristTable()[encodePos(x, y)][zidx];
+    }
     int placed_group = processGroups(x, y, current_color);
     int captures = checkCapturesAround(x, y, current_color);
 
@@ -381,6 +450,8 @@ bool Game::placeStone(int x, int y) {
         consecutive_passes = passes_backup;
         m_koRefBoard = koRef_backup;
         m_hasKoRef = hasKoRef_backup;
+        m_boardHash = boardHash_backup;
+        m_koRefHash = koRefHash_backup;
         m_deadMark = deadMark_backup;
 
         if (is_suicide) m_lastSuicide = true;
@@ -416,6 +487,7 @@ bool Game::placeStone(int x, int y) {
             tmp.turn = opp;
             tmp.m_koRefBoard = board_backup;
             tmp.m_hasKoRef = true;
+            tmp.m_koRefHash = boardHash_backup;
 
             const bool ok = tmp.placeStone(cx, cy);
             m_lastKoThreat = (!ok && tmp.m_lastKoViolation);
@@ -435,6 +507,7 @@ bool Game::placeStone(int x, int y) {
     // update ko reference for the next player (board position before this move)
     m_koRefBoard = board_backup;
     m_hasKoRef = true;
+    m_koRefHash = boardHash_backup;
 
     // next turn
     turn = oppositeColor(turn);
@@ -462,6 +535,7 @@ bool Game::pass() {
     // it advances the "two plies ago" reference.
     m_koRefBoard = *board;
     m_hasKoRef = true;
+    m_koRefHash = m_boardHash;
 
     ++consecutive_passes;
     if (consecutive_passes >= 2) {
@@ -491,6 +565,8 @@ bool Game::undo() {
     m_deadMark = tl->base.deadMark;
     m_koRefBoard = tl->base.koRefBoard;
     m_hasKoRef = tl->base.hasKoRef;
+    m_boardHash = computeBoardHash(*board);
+    m_koRefHash = computeBoardHash(m_koRefBoard);
 
     // We no longer use snapshot history/future (kept for UI compatibility).
     history.clear();
@@ -543,6 +619,8 @@ bool Game::redo() {
     m_deadMark = tl->base.deadMark;
     m_koRefBoard = tl->base.koRefBoard;
     m_hasKoRef = tl->base.hasKoRef;
+    m_boardHash = computeBoardHash(*board);
+    m_koRefHash = computeBoardHash(m_koRefBoard);
 
     history.clear();
     future.clear();
@@ -872,6 +950,8 @@ bool Game::loadFromFile(const std::string& filename) {
         m_deadMark = tl.base.deadMark;
         m_koRefBoard = tl.base.koRefBoard;
         m_hasKoRef = tl.base.hasKoRef;
+        m_boardHash = computeBoardHash(*board);
+        m_koRefHash = computeBoardHash(m_koRefBoard);
 
         history.clear();
         future.clear();
@@ -937,6 +1017,8 @@ bool Game::loadFromFile(const std::string& filename) {
     m_deadMark.fill(0);
     m_hasKoRef = false;
     m_koRefBoard = *board;
+    m_boardHash = computeBoardHash(*board);
+    m_koRefHash = computeBoardHash(m_koRefBoard);
     rebuildGroupsFromBoard();
 
     // Reset timeline base to the loaded state (no undo/redo history for legacy files).

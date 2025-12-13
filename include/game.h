@@ -40,6 +40,10 @@ private:
     // maintained even when history recording is disabled (AI snapshots).
     Board m_koRefBoard{};
     bool  m_hasKoRef = false;
+    // Zobrist hashes for fast ko detection (and future transposition/TT).
+    std::uint64_t m_boardHash = 0; // hash of current board position
+    std::uint64_t m_koRefHash = 0; // hash of ko reference position (two plies ago)
+
 
     // Endgame scoring support: mark dead stones/groups (for Japanese-style scoring).
     // 0 = alive/ignored, 1 = marked dead (removed for scoring and counted as captures for opponent).
