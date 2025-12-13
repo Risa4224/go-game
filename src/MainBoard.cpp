@@ -4,7 +4,9 @@
 #include <SFML/Window/Event.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <optional>
 #include <string>
@@ -18,17 +20,31 @@ namespace fs = std::filesystem;
 namespace
 {
     // ---- Board visual tuning (match reference style) ----
-    constexpr float kGridMargin = 28.f;             // padding inside the board for coords
-    constexpr float kOuterBorderThickness = 2.f;    // bold outer border around grid
+    constexpr float kGridMargin = 28.f;          // padding inside the board for coords
+    constexpr float kOuterBorderThickness = 2.f; // bold outer border around grid
     constexpr float kCoordFontSize = 16.f;
+
+    // ---- Right-side panel + history layout constants ----
+    constexpr float kSidePanelW = 160.f;
+    constexpr float kSidePanelMargin = 6.f;
+    constexpr float kSidePanelGap = 18.f;
+
+    constexpr float kPanelTop = 30.f;
+    constexpr float kSidePanelH = 400.f; // MUST match Draw() side panel height
+
+    constexpr float kBottomBarH = 30.f;
+    constexpr float kHistoryMargin = 10.f;
+    constexpr float kHistoryMinH = 120.f;
 
     // Go coordinates skip "I"
     std::string makeGoLetters(int n)
     {
         // Standard: A B C D E F G H J K L M N O P Q R S T ... (skip I)
         const std::string alphabet = "ABCDEFGHJKLMNOPQRSTUVWXYZ";
-        if (n <= 0) return "";
-        if ((int)alphabet.size() >= n) return alphabet.substr(0, n);
+        if (n <= 0)
+            return "";
+        if ((int)alphabet.size() >= n)
+            return alphabet.substr(0, n);
 
         // fallback for huge sizes
         std::string out;
@@ -36,7 +52,8 @@ namespace
         for (int i = 0; i < n; ++i)
         {
             char c = (i < (int)alphabet.size()) ? alphabet[i] : char('A' + (i % 26));
-            if (c == 'I') c = 'J';
+            if (c == 'I')
+                c = 'J';
             out.push_back(c);
         }
         return out;
@@ -54,9 +71,12 @@ namespace
     // Hoshi points index sets
     std::vector<int> hoshiIdx(int n)
     {
-        if (n == 19) return {3, 9, 15};
-        if (n == 13) return {3, 6, 9};
-        if (n == 9)  return {2, 4, 6};
+        if (n == 19)
+            return {3, 9, 15};
+        if (n == 13)
+            return {3, 6, 9};
+        if (n == 9)
+            return {2, 4, 6};
         return {};
     }
 
@@ -93,7 +113,8 @@ namespace
                 return;
             }
 
-            if (selected < 0) selected = 0;
+            if (selected < 0)
+                selected = 0;
             if (selected >= static_cast<int>(files.size()))
                 selected = static_cast<int>(files.size()) - 1;
 
@@ -108,6 +129,27 @@ namespace
 
     SaveLoadMenuState g_saveLoad;
 
+    // End Game button on the right toolbar (kept in .cpp only)
+    static sf::RectangleShape g_endGameButtonBox;
+    static bool g_endGameHovered = false;
+
+    // Move history scrolling (0 = follow latest; >0 = scrolled up)
+    static int g_histScroll = 0;
+
+    static sf::FloatRect computeHistoryRect(sf::Vector2u winSize)
+    {
+        const float sidePanelX = (float)winSize.x - kSidePanelW - kSidePanelMargin;
+
+        float x = sidePanelX;
+        float y = kPanelTop + kSidePanelH + kHistoryMargin;
+
+        float w = kSidePanelW;
+        float h = 250.f;
+        h = std::max(kHistoryMinH, h);
+
+        return sf::FloatRect({x, y}, {w, h});
+    }
+
     // Robust save dir finder: tries a few likely places, then creates ./saved_game if missing.
     static fs::path findSaveDir()
     {
@@ -121,7 +163,7 @@ namespace
             cwd.parent_path() / "go-game" / "saved_game",
         };
 
-        for (const auto& p : candidates)
+        for (const auto &p : candidates)
         {
             if (fs::exists(p, ec) && fs::is_directory(p, ec))
                 return p;
@@ -134,8 +176,51 @@ namespace
         return dir;
     }
 
+    // Sidecar history file per save slot
+    static fs::path historyPathForSave(const std::string &saveName)
+    {
+        const fs::path saveDir = findSaveDir();
+
+        fs::path p = fs::path(saveName).filename();
+        if (!p.has_extension())
+            p.replace_extension(".go");
+
+        fs::path hist = saveDir / p;
+        hist.replace_extension(".hist");
+        return hist;
+    }
+
+    static void writeHistoryFile(const std::string &saveName, const std::vector<std::string> &lines)
+    {
+        std::error_code ec;
+        fs::create_directories(findSaveDir(), ec);
+
+        std::ofstream out(historyPathForSave(saveName));
+        if (!out)
+            return;
+
+        for (const auto &s : lines)
+            out << s << "\n";
+    }
+
+    static bool readHistoryFile(const std::string &saveName, std::vector<std::string> &outLines)
+    {
+        outLines.clear();
+        std::ifstream in(historyPathForSave(saveName));
+        if (!in)
+            return false;
+
+        std::string line;
+        while (std::getline(in, line))
+        {
+            if (!line.empty())
+                outLines.push_back(line);
+        }
+        return true;
+    }
+
     // Best-effort deletion (looks in saved_game)
-    static bool tryDeleteSaveFile(const std::string& filename)
+    static bool tryDeleteSaveFile(const std::string &filename)
     {
         std::error_code ec;
         const fs::path saveDir = findSaveDir();
@@ -150,16 +235,20 @@ namespace
         fs::path txtName = goName;
         txtName.replace_extension(".txt");
 
+        fs::path histName = goName;
+        histName.replace_extension(".hist");
+
         std::vector<fs::path> toTry = {
             saveDir / inName,
             saveDir / goName,
             saveDir / txtName,
+            saveDir / histName,
 
             // sometimes they are saved in CWD by mistake
             inName,
             goName,
-            txtName
-        };
+            txtName,
+            histName};
 
         std::sort(toTry.begin(), toTry.end());
         toTry.erase(std::unique(toTry.begin(), toTry.end()), toTry.end());
@@ -168,7 +257,9 @@ namespace
         std::cout << "[Delete Debug] CWD: " << fs::current_path() << "\n";
         std::cout << "[Delete Debug] SaveDir chosen: " << saveDir << "\n";
 
-        for (const auto& p : toTry)
+        bool anyDeleted = false;
+
+        for (const auto &p : toTry)
         {
             bool ex = fs::exists(p, ec);
             std::cout << "  Try: " << p << " | exists=" << (ex ? "yes" : "no") << "\n";
@@ -177,27 +268,39 @@ namespace
                 if (fs::remove(p, ec))
                 {
                     std::cout << "  -> DELETE OK: " << p << "\n";
-                    return true;
+                    anyDeleted = true;
                 }
-                std::cout << "  -> DELETE FAIL: " << p << " | err=" << ec.message() << "\n";
+                else
+                {
+                    std::cout << "  -> DELETE FAIL: " << p << " | err=" << ec.message() << "\n";
+                }
             }
         }
 
-        std::cout << "[Delete Debug] Could not delete. Listing files in: " << saveDir << "\n";
-        if (fs::exists(saveDir, ec) && fs::is_directory(saveDir, ec))
+        if (!anyDeleted)
         {
-            for (const auto& e : fs::directory_iterator(saveDir, ec))
+            std::cout << "[Delete Debug] Could not delete. Listing files in: " << saveDir << "\n";
+            if (fs::exists(saveDir, ec) && fs::is_directory(saveDir, ec))
             {
-                if (!ec && e.is_regular_file())
-                    std::cout << "   - " << e.path().filename().string() << "\n";
+                for (const auto &e : fs::directory_iterator(saveDir, ec))
+                {
+                    if (!ec && e.is_regular_file())
+                        std::cout << "   - " << e.path().filename().string() << "\n";
+                }
+            }
+            else
+            {
+                std::cout << "[Delete Debug] SaveDir does not exist.\n";
             }
         }
-        else
-        {
-            std::cout << "[Delete Debug] SaveDir does not exist.\n";
-        }
 
-        return false;
+        return anyDeleted;
+    }
+
+    static void clampHistoryScroll(int historySize, int maxLines)
+    {
+        const int maxScroll = std::max(0, historySize - maxLines);
+        g_histScroll = std::clamp(g_histScroll, 0, maxScroll);
     }
 } // namespace
 
@@ -245,19 +348,15 @@ void MainBoard::Init()
     m_boardBackground.setOutlineColor(sf::Color::Black);
 
     // Reserve space for right side panel
-    constexpr float sidePanelW = 160.f;
-    constexpr float sidePanelMargin = 6.f;
-    constexpr float sidePanelGap = 18.f;
-
-    const float sidePanelX = winSizeF.x - sidePanelW - sidePanelMargin;
-    const float boardAreaW = sidePanelX - sidePanelGap;
+    const float sidePanelX = winSizeF.x - kSidePanelW - kSidePanelMargin;
+    const float boardAreaW = sidePanelX - kSidePanelGap;
 
     m_boardTopLeft.x = std::max(20.f, (boardAreaW - m_boardPixelSize) * 0.5f);
     m_boardTopLeft.y = (winSizeF.y - m_boardPixelSize) * 0.5f;
     m_boardBackground.setPosition(m_boardTopLeft);
 
     m_hasClassicTexture = m_boardTextureClassic.loadFromFile("assets/texture/light-wood.jpg");
-    m_hasDarkTexture    = m_boardTextureDark.loadFromFile("assets/texture/dark-stone.jpg");
+    m_hasDarkTexture = m_boardTextureDark.loadFromFile("assets/texture/dark-stone.jpg");
 
     // grid is inset so coordinates fit inside board
     m_cellSize = (m_boardPixelSize - 2.f * kGridMargin) / static_cast<float>(m_boardSize - 1);
@@ -265,7 +364,7 @@ void MainBoard::Init()
     buildGrid();
 
     // --- 3. UI Buttons Positioning ---
-    float btnX = sidePanelX + (sidePanelW - 100.f) * 0.5f;
+    float btnX = sidePanelX + (kSidePanelW - 100.f) * 0.5f;
 
     auto setupBtn = [&](sf::RectangleShape &box, float yPos)
     {
@@ -281,6 +380,9 @@ void MainBoard::Init()
     setupBtn(m_saveButtonBox, 240.f);
     setupBtn(m_loadButtonBox, 290.f);
 
+    // End Game button on toolbar
+    setupBtn(g_endGameButtonBox, 340.f);
+
     if (!m_game)
         m_game = std::make_unique<Game>(new Board());
 
@@ -288,6 +390,11 @@ void MainBoard::Init()
 
     if (m_context)
         m_lastStoneTheme = m_context->m_stoneTheme;
+
+    // IMPORTANT: clear history BEFORE AI move (so AI-first doesn't get wiped)
+    m_moveHistory.clear();
+    m_moveRedo.clear();
+    g_histScroll = 0;
 
     rebuildStonesFromGame();
     maybeRunAITurn();
@@ -306,12 +413,12 @@ void MainBoard::loadStoneTexturesFromFiles()
             std::cout << "[MainBoard] Stone texture missing or failed to load: " << path.string() << "\n";
     };
 
-    tryLoad(m_stoneTexClassicBlack,    m_hasStoneTexClassicBlack,    fs::path("assets/stones/classic_black.png"));
-    tryLoad(m_stoneTexClassicWhite,    m_hasStoneTexClassicWhite,    fs::path("assets/stones/classic_white.png"));
+    tryLoad(m_stoneTexClassicBlack, m_hasStoneTexClassicBlack, fs::path("assets/stones/classic_black.png"));
+    tryLoad(m_stoneTexClassicWhite, m_hasStoneTexClassicWhite, fs::path("assets/stones/classic_white.png"));
     tryLoad(m_stoneTexSlateShellBlack, m_hasStoneTexSlateShellBlack, fs::path("assets/stones/slate_shell_black.png"));
     tryLoad(m_stoneTexSlateShellWhite, m_hasStoneTexSlateShellWhite, fs::path("assets/stones/slate_shell_white.png"));
-    tryLoad(m_stoneTexGlassBlack,      m_hasStoneTexGlassBlack,      fs::path("assets/stones/glass_black.png"));
-    tryLoad(m_stoneTexGlassWhite,      m_hasStoneTexGlassWhite,      fs::path("assets/stones/glass_white.png"));
+    tryLoad(m_stoneTexGlassBlack, m_hasStoneTexGlassBlack, fs::path("assets/stones/glass_black.png"));
+    tryLoad(m_stoneTexGlassWhite, m_hasStoneTexGlassWhite, fs::path("assets/stones/glass_white.png"));
 }
 
 const sf::Texture *MainBoard::getStoneTexture(StoneTheme theme, PieceColor c) const
@@ -321,16 +428,19 @@ const sf::Texture *MainBoard::getStoneTexture(StoneTheme theme, PieceColor c) co
     switch (theme)
     {
     case StoneTheme::SlateShell:
-        if (wantBlack) return m_hasStoneTexSlateShellBlack ? &m_stoneTexSlateShellBlack : nullptr;
+        if (wantBlack)
+            return m_hasStoneTexSlateShellBlack ? &m_stoneTexSlateShellBlack : nullptr;
         return m_hasStoneTexSlateShellWhite ? &m_stoneTexSlateShellWhite : nullptr;
 
     case StoneTheme::Glass:
-        if (wantBlack) return m_hasStoneTexGlassBlack ? &m_stoneTexGlassBlack : nullptr;
+        if (wantBlack)
+            return m_hasStoneTexGlassBlack ? &m_stoneTexGlassBlack : nullptr;
         return m_hasStoneTexGlassWhite ? &m_stoneTexGlassWhite : nullptr;
 
     case StoneTheme::Classic:
     default:
-        if (wantBlack) return m_hasStoneTexClassicBlack ? &m_stoneTexClassicBlack : nullptr;
+        if (wantBlack)
+            return m_hasStoneTexClassicBlack ? &m_stoneTexClassicBlack : nullptr;
         return m_hasStoneTexClassicWhite ? &m_stoneTexClassicWhite : nullptr;
     }
 }
@@ -406,10 +516,12 @@ PieceColor MainBoard::aiColor() const { return (humanColor() == BLACK) ? WHITE :
 
 void MainBoard::handleGameOver()
 {
-    if (!m_game) return;
+    if (!m_game)
+        return;
 
     auto [b, w] = m_game->calculateFinalScore();
-    std::string msg = (b > w) ? "Black wins!" : (w > b) ? "White wins!" : "Draw!";
+    std::string msg = (b > w) ? "Black wins!" : (w > b) ? "White wins!"
+                                                        : "Draw!";
     msg += " B:" + std::to_string(b) + " W:" + std::to_string(w);
 
     setNotification(msg);
@@ -425,6 +537,11 @@ void MainBoard::maybeRunAITurn()
     AIMove mv = GoAI::computeAIMove(*m_game, m_context->m_aiDifficulty);
     if (mv.isPass)
     {
+        m_moveRedo.clear();
+        std::string who = (aiColor() == BLACK ? "Black" : "White");
+        m_moveHistory.push_back(who + " Pass");
+        g_histScroll = 0;
+
         if (m_game->pass())
             handleGameOver();
         else
@@ -438,6 +555,11 @@ void MainBoard::maybeRunAITurn()
 
     if (m_game->placeStone(mv.x, mv.y))
     {
+        m_moveRedo.clear();
+        std::string who = (aiColor() == BLACK ? "Black" : "White");
+        m_moveHistory.push_back(who + " " + toGoCoord(mv.x, mv.y, m_boardSize));
+        g_histScroll = 0;
+
         m_placeSound.play();
         rebuildStonesFromGame();
         setNotification("AI Played " + toGoCoord(mv.x, mv.y, m_boardSize));
@@ -495,7 +617,8 @@ void MainBoard::rebuildStonesFromGame()
         for (int y = 0; y < size; ++y)
         {
             PieceColor c = board->getPiece(x, y);
-            if (c == NONE) continue;
+            if (c == NONE)
+                continue;
 
             sf::CircleShape stone(radius);
             stone.setOrigin({radius, radius});
@@ -534,10 +657,16 @@ void MainBoard::handleLeftClick(const sf::Vector2i &pixelPos)
         m_placeSound.play();
         rebuildStonesFromGame();
 
-        // IMPORTANT: always show Go coords here (fixes the "(1,1)" issue)
-        std::string msg = (m_game->getTurn() == WHITE ? "Black" : "White");
-        msg += " " + toGoCoord(ix, iy, m_boardSize);
+        m_moveRedo.clear();
+        std::string who = (m_game->getTurn() == WHITE ? "Black" : "White"); // turn advanced already
+        std::string entry = who + " " + toGoCoord(ix, iy, m_boardSize);
+        if (m_game->lastMoveCreatedKoThreat())
+            entry += " (Ko)";
+        m_moveHistory.push_back(entry);
+        g_histScroll = 0;
 
+        // Notification (same)
+        std::string msg = who + " " + toGoCoord(ix, iy, m_boardSize);
         if (m_game->lastMoveCreatedKoThreat())
             msg += " (Ko)";
 
@@ -580,6 +709,8 @@ void MainBoard::Update(sf::Time)
     updateColor(m_pauseButtonBox, m_pauseHovered);
     updateColor(m_saveButtonBox, m_saveHovered);
     updateColor(m_loadButtonBox, m_loadHovered);
+
+    updateColor(g_endGameButtonBox, g_endGameHovered);
 
     if (m_showNotification)
     {
@@ -695,8 +826,8 @@ void MainBoard::Draw()
     const auto &font = m_context->m_assets->GetFont(MAIN_FONT);
 
     const bool dark = (m_context->m_boardTheme == BoardTheme::Dark);
-    const sf::Color coordColor  = dark ? sf::Color(235, 235, 235) : sf::Color::Black;
-    const sf::Color coordShadow = dark ? sf::Color(0, 0, 0, 140)  : sf::Color(255, 255, 255, 140);
+    const sf::Color coordColor = dark ? sf::Color(235, 235, 235) : sf::Color::Black;
+    const sf::Color coordShadow = dark ? sf::Color(0, 0, 0, 140) : sf::Color(255, 255, 255, 140);
 
     auto drawTextNice = [&](const std::string &str, sf::Vector2f pos, unsigned int size)
     {
@@ -756,17 +887,12 @@ void MainBoard::Draw()
     }
 
     // ---- Side panel ----
-    constexpr float sidePanelW = 160.f;
-    constexpr float sidePanelMargin = 6.f;
-    const float sidePanelX = (float)winSize.x - sidePanelW - sidePanelMargin;
-
-    const float panelTop = 30.f;
-    const float panelH = 340.f;
+    const float sidePanelX = (float)winSize.x - kSidePanelW - kSidePanelMargin;
 
     sf::RectangleShape sidePanel;
-    sidePanel.setSize({sidePanelW, panelH});
+    sidePanel.setSize({kSidePanelW, kSidePanelH});
     sidePanel.setFillColor(sf::Color(40, 40, 40, 220));
-    sidePanel.setPosition({sidePanelX, panelTop});
+    sidePanel.setPosition({sidePanelX, kPanelTop});
     sidePanel.setOutlineThickness(1.f);
     sidePanel.setOutlineColor(sf::Color(80, 80, 80));
     window.draw(sidePanel);
@@ -790,6 +916,7 @@ void MainBoard::Draw()
     drawBtn(m_pauseButtonBox, "Pause");
     drawBtn(m_saveButtonBox, "Save");
     drawBtn(m_loadButtonBox, "Load");
+    drawBtn(g_endGameButtonBox, "End Game");
 
     // ---- Turn Panel ----
     if (m_game)
@@ -818,22 +945,22 @@ void MainBoard::Draw()
     }
 
     // ---- Bottom bar ----
-    sf::RectangleShape bottomBar({(float)winSize.x, 30.f});
-    bottomBar.setPosition({0.f, (float)winSize.y - 30.f});
+    sf::RectangleShape bottomBar({(float)winSize.x, kBottomBarH});
+    bottomBar.setPosition({0.f, (float)winSize.y - kBottomBarH});
     bottomBar.setFillColor(sf::Color(30, 30, 30, 230));
     window.draw(bottomBar);
 
-    sf::Text hint(font, "ESC: Back | Click: Place | Z: Undo | Y: Redo | P: Pass", 16);
+    sf::Text hint(font, "ESC: Back | Click: Place | Z: Undo | Y: Redo | P: Pass | E: End", 16);
     hint.setFillColor(sf::Color::White);
     hint.setStyle(sf::Text::Bold);
-    hint.setPosition({10.f, (float)winSize.y - 30.f + 5.f});
+    hint.setPosition({10.f, (float)winSize.y - kBottomBarH + 5.f});
     window.draw(hint);
 
     // ---- Notification bar ----
     if (m_showNotification && !m_notificationText.empty())
     {
         sf::RectangleShape notifBar({(float)winSize.x, 24.f});
-        notifBar.setPosition({0.f, (float)winSize.y - 30.f - 24.f});
+        notifBar.setPosition({0.f, (float)winSize.y - kBottomBarH - 24.f});
         notifBar.setFillColor(sf::Color(50, 50, 50, 230));
         notifBar.setOutlineThickness(1.f);
         notifBar.setOutlineColor(sf::Color(200, 200, 0, 180));
@@ -842,8 +969,67 @@ void MainBoard::Draw()
         sf::Text notifText(font, m_notificationText, 16);
         notifText.setFillColor(sf::Color(255, 255, 180));
         notifText.setStyle(sf::Text::Bold);
-        notifText.setPosition({10.f, (float)winSize.y - 30.f - 24.f + 4.f});
+        notifText.setPosition({10.f, (float)winSize.y - kBottomBarH - 24.f + 4.f});
         window.draw(notifText);
+    }
+
+    // ---- Move History (scrollable, under side panel) ----
+    {
+        sf::FloatRect rect = computeHistoryRect(winSize);
+
+        sf::RectangleShape histPanel({rect.size.x, rect.size.y});
+        histPanel.setPosition({rect.position.x, rect.position.y});
+        histPanel.setFillColor(sf::Color(30, 30, 30, 220));
+        histPanel.setOutlineThickness(1.f);
+        histPanel.setOutlineColor(sf::Color(80, 80, 80));
+        window.draw(histPanel);
+
+        sf::Text title(font, "Moves", 16);
+        title.setFillColor(sf::Color::White);
+        title.setStyle(sf::Text::Bold);
+        title.setPosition({rect.position.x + 10.f, rect.position.y + 8.f});
+        window.draw(title);
+
+        const float startY = rect.position.y + 34.f;
+        const float lineH = 16.f;
+
+        int maxLines = (int)((rect.size.y - 44.f) / lineH);
+        maxLines = std::max(1, maxLines);
+
+        clampHistoryScroll((int)m_moveHistory.size(), maxLines);
+
+        // g_histScroll = how many lines from the bottom
+        int start = std::max(0, (int)m_moveHistory.size() - maxLines - g_histScroll);
+        int end = std::min((int)m_moveHistory.size(), start + maxLines);
+
+        float lineY = startY;
+        for (int i = start; i < end; ++i)
+        {
+            sf::Text line(font, std::to_string(i + 1) + ". " + m_moveHistory[i], 14);
+            // highlight the last move only when we are at bottom (scroll=0) and it's visible
+            bool isLast = (i == (int)m_moveHistory.size() - 1);
+            line.setFillColor((isLast && g_histScroll == 0) ? sf::Color(255, 255, 180) : sf::Color(220, 220, 220));
+            line.setPosition({rect.position.x + 10.f, lineY});
+            window.draw(line);
+            lineY += lineH;
+        }
+
+        if (m_moveHistory.empty())
+        {
+            sf::Text empty(font, "(no moves yet)", 14);
+            empty.setFillColor(sf::Color(180, 180, 180));
+            empty.setPosition({rect.position.x + 10.f, startY});
+            window.draw(empty);
+        }
+
+        // small scroll hint
+        if ((int)m_moveHistory.size() > maxLines)
+        {
+            sf::Text scrollHint(font, "Wheel: scroll", 12);
+            scrollHint.setFillColor(sf::Color(160, 160, 160));
+            scrollHint.setPosition({rect.position.x + 10.f, rect.position.y + rect.size.y - 18.f});
+            window.draw(scrollHint);
+        }
     }
 
     // ---- Save/Load overlay ----
@@ -931,7 +1117,7 @@ void MainBoard::Draw()
 
         std::string act =
             (g_saveLoad.mode == SaveLoadMode::Save && g_saveLoad.selected >= 0) ? "Overwrite"
-            : (g_saveLoad.mode == SaveLoadMode::Save ? "Save New" : "Load");
+                                                                                : (g_saveLoad.mode == SaveLoadMode::Save ? "Save New" : "Load");
 
         drawMenuBtn(pPos.x + pSize.x - g_saveLoad.btnWidth - 20.f, m_menuActionText, act, sf::Color(50, 150, 50));
     }
@@ -973,8 +1159,22 @@ void MainBoard::ProcessInput()
                 if (m_game->loadNamed(g_saveLoad.files[g_saveLoad.selected]))
                 {
                     rebuildStonesFromGame();
+                    m_moveRedo.clear();
+
+                    // Load history from sidecar .hist
+                    if (!readHistoryFile(g_saveLoad.files[g_saveLoad.selected], m_moveHistory))
+                    {
+                        m_moveHistory.clear();
+                        m_moveHistory.push_back("Loaded: " + g_saveLoad.files[g_saveLoad.selected]);
+                    }
+
+                    g_histScroll = 0;
+
                     setNotification("Loaded: " + g_saveLoad.files[g_saveLoad.selected]);
                     g_saveLoad.open = false;
+
+                    // If AI is to play after loading, let it play and be logged
+                    maybeRunAITurn();
                 }
             }
             else
@@ -987,6 +1187,8 @@ void MainBoard::ProcessInput()
             if (g_saveLoad.selected >= 0 && g_saveLoad.selected < (int)g_saveLoad.files.size())
             {
                 m_game->saveNamed(g_saveLoad.files[g_saveLoad.selected]);
+                writeHistoryFile(g_saveLoad.files[g_saveLoad.selected], m_moveHistory);
+
                 setNotification("Overwritten: " + g_saveLoad.files[g_saveLoad.selected]);
                 g_saveLoad.open = false;
             }
@@ -994,6 +1196,8 @@ void MainBoard::ProcessInput()
             {
                 std::string n;
                 m_game->saveToNewSlot(n);
+                writeHistoryFile(n, m_moveHistory);
+
                 setNotification("Saved New: " + n);
                 g_saveLoad.open = false;
             }
@@ -1098,12 +1302,27 @@ void MainBoard::ProcessInput()
             if (key->scancode == sf::Keyboard::Scancode::Z)
             {
                 if (m_game->undo())
+                {
                     rebuildStonesFromGame();
+                    if (!m_moveHistory.empty())
+                    {
+                        m_moveRedo.push_back(m_moveHistory.back());
+                        m_moveHistory.pop_back();
+                    }
+                    // keep scroll clamped
+                }
             }
             if (key->scancode == sf::Keyboard::Scancode::Y)
             {
                 if (m_game->redo())
+                {
                     rebuildStonesFromGame();
+                    if (!m_moveRedo.empty())
+                    {
+                        m_moveHistory.push_back(m_moveRedo.back());
+                        m_moveRedo.pop_back();
+                    }
+                }
             }
             if (key->scancode == sf::Keyboard::Scancode::P)
             {
@@ -1112,6 +1331,36 @@ void MainBoard::ProcessInput()
                     handleGameOver();
                 else
                     maybeRunAITurn();
+
+                m_moveRedo.clear();
+                // because turn already advanced after pass(), the passer is the opposite
+                std::string who = (m_game->getTurn() == BLACK ? "White" : "Black");
+                m_moveHistory.push_back(who + " Pass");
+                g_histScroll = 0;
+            }
+            if (key->scancode == sf::Keyboard::Scancode::E)
+            {
+                handleGameOver();
+            }
+        }
+        else if (const auto *wheel = event->getIf<sf::Event::MouseWheelScrolled>())
+        {
+            // History panel scroll (only when cursor is over history panel)
+            sf::Vector2f mPos((float)wheel->position.x, (float)wheel->position.y);
+            sf::FloatRect histRect = computeHistoryRect(m_context->m_window->getSize());
+
+            if (histRect.contains(mPos))
+            {
+                // Wheel up (delta>0) -> older moves -> increase scroll
+                int d = (int)std::round(wheel->delta);
+                g_histScroll += d;
+
+                // clamp based on current visible lines estimate
+                // (use same as Draw's line calc)
+                const float lineH = 16.f;
+                int maxLines = (int)((histRect.size.y - 44.f) / lineH);
+                maxLines = std::max(1, maxLines);
+                clampHistoryScroll((int)m_moveHistory.size(), maxLines);
             }
         }
         else if (const auto *mm = event->getIf<sf::Event::MouseMoved>())
@@ -1123,6 +1372,8 @@ void MainBoard::ProcessInput()
             m_pauseHovered = m_pauseButtonBox.getGlobalBounds().contains(mp);
             m_saveHovered = m_saveButtonBox.getGlobalBounds().contains(mp);
             m_loadHovered = m_loadButtonBox.getGlobalBounds().contains(mp);
+
+            g_endGameHovered = g_endGameButtonBox.getGlobalBounds().contains(mp);
         }
         else if (const auto *mb = event->getIf<sf::Event::MouseButtonPressed>())
         {
@@ -1133,12 +1384,26 @@ void MainBoard::ProcessInput()
                 if (m_undoButtonBox.getGlobalBounds().contains(mp))
                 {
                     if (m_game->undo())
+                    {
                         rebuildStonesFromGame();
+                        if (!m_moveHistory.empty())
+                        {
+                            m_moveRedo.push_back(m_moveHistory.back());
+                            m_moveHistory.pop_back();
+                        }
+                    }
                 }
                 else if (m_redoButtonBox.getGlobalBounds().contains(mp))
                 {
                     if (m_game->redo())
+                    {
                         rebuildStonesFromGame();
+                        if (!m_moveRedo.empty())
+                        {
+                            m_moveHistory.push_back(m_moveRedo.back());
+                            m_moveRedo.pop_back();
+                        }
+                    }
                 }
                 else if (m_passButtonBox.getGlobalBounds().contains(mp))
                 {
@@ -1147,6 +1412,11 @@ void MainBoard::ProcessInput()
                         handleGameOver();
                     else
                         maybeRunAITurn();
+
+                    m_moveRedo.clear();
+                    std::string who = (m_game->getTurn() == BLACK ? "White" : "Black");
+                    m_moveHistory.push_back(who + " Pass");
+                    g_histScroll = 0;
                 }
                 else if (m_pauseButtonBox.getGlobalBounds().contains(mp))
                 {
@@ -1159,6 +1429,10 @@ void MainBoard::ProcessInput()
                 else if (m_loadButtonBox.getGlobalBounds().contains(mp))
                 {
                     openMenu(SaveLoadMode::Load);
+                }
+                else if (g_endGameButtonBox.getGlobalBounds().contains(mp))
+                {
+                    handleGameOver();
                 }
                 else
                 {
@@ -1174,5 +1448,10 @@ void MainBoard::resetGame()
     m_game = std::make_unique<Game>(new Board());
     m_stones.clear();
     rebuildStonesFromGame();
+
+    m_moveHistory.clear();
+    m_moveRedo.clear();
+    g_histScroll = 0;
+
     maybeRunAITurn();
 }

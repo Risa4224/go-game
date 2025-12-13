@@ -108,6 +108,8 @@ private:
     sf::Sound m_invalidSound;
     sf::Sound m_winSound;
 
+    std::vector<std::string> m_moveHistory;
+    std::vector<std::string> m_moveRedo;
 public:
     MainBoard(std::shared_ptr<Context> &context);
     ~MainBoard() override = default;
