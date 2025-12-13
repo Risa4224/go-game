@@ -10,6 +10,8 @@
 #include <vector>
 #include <queue>
 #include <sstream>
+#include <memory>
+
 
 namespace fs = std::filesystem;
 
@@ -162,9 +164,23 @@ Game& Game::operator=(const Game& other) {
     return *this;
 }
 
+// Ownership fix:
+// Game stores the board as std::unique_ptr<Board>. The previous constructor
+// did `board(b)` which makes Game *delete* the passed pointer.
+// If callers pass a stack/static Board (common in UI code), that is UB.
+//
+// To keep the public signature unchanged (minimal integration changes),
+// we always allocate/own our Board internally and (optionally) COPY the
+// provided board state into it.
 Game::Game(Board* b)
-    : board(b), turn(BLACK)
+    : board(std::make_unique<Board>()), turn(BLACK)
 {
+    // If caller provided an initial board, clone its content.
+    // (Game will not alias external memory.)
+    if (b) {
+        *board = *b;
+    }
+
     // Ensure clean initial state (important for load/replay)
     black_captures = 0;
     white_captures = 0;
@@ -192,6 +208,7 @@ Game::Game(Board* b)
     m_timeline.base.hasKoRef = m_hasKoRef;
     m_timeline.base.deadMark.fill(0);
 }
+
 
 PieceColor Game::oppositeColor(PieceColor input) const {
     if (input == BLACK) return WHITE;
