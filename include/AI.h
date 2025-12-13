@@ -51,4 +51,14 @@ private:
                                    double beta,
                                    bool maximizingPlayer,
                                    PieceColor aiColor);
+
+// Alpha–Beta with a tiny quiescence extension (only used in HARD).
+static double minimaxAlphaBetaQ(Game game,
+                                int depth,
+                                int maxDepth,
+                                int qDepthLeft,
+                                double alpha,
+                                double beta,
+                                bool maximizingPlayer,
+                                PieceColor aiColor);
 };

@@ -7,7 +7,6 @@
 #include <cctype>
 #include <cstddef>
 #include <cstdint>
-#include <unordered_map>
 #include <vector>
 #include <queue>
 #include <sstream>
@@ -26,43 +25,6 @@ namespace {
     };
     thread_local Stamp g_seenLib;
     thread_local Stamp g_seenStone;
-
-    struct MoveRec {
-        PieceColor color = NONE;
-        int x = -1;
-        int y = -1;
-        bool isPass = false;
-    };
-
-    struct BaseState {
-        Board board;
-        PieceColor turn = BLACK;
-        int black_captures = 0;
-        int white_captures = 0;
-        int consecutive_passes = 0;
-        Board koRefBoard;
-        bool hasKoRef = false;
-        std::array<std::uint8_t, BOARD_CELLS> deadMark{};
-    };
-
-    struct Timeline {
-        BaseState base;
-        std::vector<MoveRec> moves;
-        std::size_t cursor = 0; // number of moves already applied
-        bool record = true;     // disabled during replay
-    };
-
-    static std::unordered_map<const Game*, Timeline> g_timeline;
-
-    static Timeline* findTimeline(const Game* g) {
-        auto it = g_timeline.find(g);
-        if (it == g_timeline.end()) return nullptr;
-        return &it->second;
-    }
-
-    static Timeline& ensureTimeline(const Game* g) {
-        return g_timeline.try_emplace(g).first->second;
-    }
 
     static bool isUnsignedIntToken(const std::string& s) {
         if (s.empty()) return false;
@@ -129,7 +91,7 @@ Game::Game(const Game& other)
       turn(other.turn),
       groups(other.groups),
       groupAt(other.groupAt),
-      // history & future intentionally NOT copied (snapshots)
+      // Snapshot history removed; keep copies light for AI.
       m_enableHistory(false),
       m_koRefBoard(other.m_koRefBoard),
       m_hasKoRef(other.m_hasKoRef),
@@ -142,7 +104,22 @@ Game::Game(const Game& other)
       m_lastKoViolation(other.m_lastKoViolation),
       m_lastKoThreat(other.m_lastKoThreat)
 {
+    // Copies are used for AI/snapshots. Keep them light:
+    // do NOT copy the main game's move timeline; just reset base to the current state.
+    m_timeline.record = false;
+    m_timeline.moves.clear();
+    m_timeline.cursor = 0;
+
+    m_timeline.base.board = *board;
+    m_timeline.base.turn = turn;
+    m_timeline.base.black_captures = black_captures;
+    m_timeline.base.white_captures = white_captures;
+    m_timeline.base.consecutive_passes = consecutive_passes;
+    m_timeline.base.koRefBoard = m_koRefBoard;
+    m_timeline.base.hasKoRef = m_hasKoRef;
+    m_timeline.base.deadMark = m_deadMark;
 }
+
 
 Game& Game::operator=(const Game& other) {
     if (this == &other) return *this;
@@ -162,12 +139,26 @@ Game& Game::operator=(const Game& other) {
     m_deadMark = other.m_deadMark;
 
     // IMPORTANT: keep this->m_enableHistory unchanged (main game must keep recording)
-    // history/future are not copied by design
+    // Snapshot history removed; copies stay light.
     m_lastCaptures = other.m_lastCaptures;
     m_lastInvalid = other.m_lastInvalid;
     m_lastSuicide = other.m_lastSuicide;
     m_lastKoViolation = other.m_lastKoViolation;
     m_lastKoThreat = other.m_lastKoThreat;
+
+    // Keep assignment light: reset timeline to the current state (do not copy move list).
+    m_timeline.record = m_enableHistory;
+    m_timeline.moves.clear();
+    m_timeline.cursor = 0;
+    m_timeline.base.board = *board;
+    m_timeline.base.turn = turn;
+    m_timeline.base.black_captures = black_captures;
+    m_timeline.base.white_captures = white_captures;
+    m_timeline.base.consecutive_passes = consecutive_passes;
+    m_timeline.base.koRefBoard = m_koRefBoard;
+    m_timeline.base.hasKoRef = m_hasKoRef;
+    m_timeline.base.deadMark = m_deadMark;
+
     return *this;
 }
 
@@ -179,9 +170,6 @@ Game::Game(Board* b)
     white_captures = 0;
     consecutive_passes = 0;
 
-    history.clear();
-    future.clear();
-
     groupAt.fill(-1);
     m_deadMark.fill(0);
     m_hasKoRef = false;
@@ -191,19 +179,18 @@ Game::Game(Board* b)
     rebuildGroupsFromBoard(); // an toàn nếu board không rỗng
 
     // Initialize timeline (used by save/load + undo/redo without huge snapshots)
-    auto& tl = ensureTimeline(this);
-    tl.record = true;
-    tl.moves.clear();
-    tl.cursor = 0;
+    m_timeline.record = true;
+    m_timeline.moves.clear();
+    m_timeline.cursor = 0;
 
-    tl.base.board = *board;
-    tl.base.turn = turn;
-    tl.base.black_captures = black_captures;
-    tl.base.white_captures = white_captures;
-    tl.base.consecutive_passes = consecutive_passes;
-    tl.base.koRefBoard = m_koRefBoard;
-    tl.base.hasKoRef = m_hasKoRef;
-    tl.base.deadMark.fill(0);
+    m_timeline.base.board = *board;
+    m_timeline.base.turn = turn;
+    m_timeline.base.black_captures = black_captures;
+    m_timeline.base.white_captures = white_captures;
+    m_timeline.base.consecutive_passes = consecutive_passes;
+    m_timeline.base.koRefBoard = m_koRefBoard;
+    m_timeline.base.hasKoRef = m_hasKoRef;
+    m_timeline.base.deadMark.fill(0);
 }
 
 PieceColor Game::oppositeColor(PieceColor input) const {
@@ -495,13 +482,11 @@ bool Game::placeStone(int x, int y) {
     }
 
     // record history only for main game instance
-    if (m_enableHistory) {
-        if (auto* tl = findTimeline(this); tl && tl->record) {
-            // If we undid some moves, drop the redo tail before recording a new move
-            if (tl->cursor < tl->moves.size()) tl->moves.resize(tl->cursor);
-            tl->moves.push_back(MoveRec{current_color, x, y, false});
-            tl->cursor = tl->moves.size();
-        }
+    if (m_enableHistory && m_timeline.record) {
+        // If we undid some moves, drop the redo tail before recording a new move
+        if (m_timeline.cursor < m_timeline.moves.size()) m_timeline.moves.resize(m_timeline.cursor);
+        m_timeline.moves.push_back(MoveRec{current_color, x, y, false});
+        m_timeline.cursor = m_timeline.moves.size();
     }
 
     // update ko reference for the next player (board position before this move)
@@ -523,12 +508,10 @@ bool Game::pass() {
     m_lastKoViolation = false;
     m_lastKoThreat    = false;
 
-    if (m_enableHistory) {
-        if (auto* tl = findTimeline(this); tl && tl->record) {
-            if (tl->cursor < tl->moves.size()) tl->moves.resize(tl->cursor);
-            tl->moves.push_back(MoveRec{turn, -1, -1, true});
-            tl->cursor = tl->moves.size();
-        }
+    if (m_enableHistory && m_timeline.record) {
+        if (m_timeline.cursor < m_timeline.moves.size()) m_timeline.moves.resize(m_timeline.cursor);
+        m_timeline.moves.push_back(MoveRec{turn, -1, -1, true});
+        m_timeline.cursor = m_timeline.moves.size();
     }
 
     // A pass counts as a move for ko purposes under simple-ko:
@@ -547,8 +530,7 @@ bool Game::pass() {
 }
 
 bool Game::undo() {
-    auto* tl = findTimeline(this);
-    if (!tl) return false;
+    auto* tl = &m_timeline;
     if (tl->cursor == 0) return false;
 
     --tl->cursor;
@@ -568,9 +550,7 @@ bool Game::undo() {
     m_boardHash = computeBoardHash(*board);
     m_koRefHash = computeBoardHash(m_koRefBoard);
 
-    // We no longer use snapshot history/future (kept for UI compatibility).
-    history.clear();
-    future.clear();
+    // Snapshot history/future removed; timeline is used for undo/redo.
 
     groups.clear();
     groupAt.fill(-1);
@@ -601,8 +581,7 @@ bool Game::undo() {
 }
 
 bool Game::redo() {
-    auto* tl = findTimeline(this);
-    if (!tl) return false;
+    auto* tl = &m_timeline;
     if (tl->cursor >= tl->moves.size()) return false;
 
     ++tl->cursor;
@@ -621,9 +600,6 @@ bool Game::redo() {
     m_hasKoRef = tl->base.hasKoRef;
     m_boardHash = computeBoardHash(*board);
     m_koRefHash = computeBoardHash(m_koRefBoard);
-
-    history.clear();
-    future.clear();
 
     groups.clear();
     groupAt.fill(-1);
@@ -810,7 +786,7 @@ bool Game::saveToFile(const std::string& filename) const {
     out << "GO_SAVE_V2\n";
     out << BOARD_SIZE << '\n';
 
-    const Timeline* tl = findTimeline(this);
+    const Timeline* tl = &m_timeline;
 
     // If timeline is missing (shouldn't happen for the main game), fall back to current state.
     BaseState base;
@@ -924,7 +900,7 @@ bool Game::loadFromFile(const std::string& filename) {
             }
         }
 
-        auto& tl = ensureTimeline(this);
+        auto& tl = m_timeline;
         tl.record = true;
         tl.moves = std::move(moves);
         tl.cursor = cursor;
@@ -952,9 +928,6 @@ bool Game::loadFromFile(const std::string& filename) {
         m_hasKoRef = tl.base.hasKoRef;
         m_boardHash = computeBoardHash(*board);
         m_koRefHash = computeBoardHash(m_koRefBoard);
-
-        history.clear();
-        future.clear();
         groups.clear();
         groupAt.fill(-1);
         rebuildGroupsFromBoard();
@@ -984,7 +957,7 @@ bool Game::loadFromFile(const std::string& filename) {
     }
 
     // ---------------------------
-    // Legacy format (V1): load current board only and ignore snapshot history/future.
+    // Legacy format (V1): load current board only and ignore legacy snapshot stacks.
     // This keeps the file compatible, while avoiding huge memory usage.
     // ---------------------------
     if (!isUnsignedIntToken(head)) return false;
@@ -1011,9 +984,6 @@ bool Game::loadFromFile(const std::string& filename) {
             else board->setPiece(x, y, NONE);
         }
     }
-
-    history.clear();
-    future.clear();
     m_deadMark.fill(0);
     m_hasKoRef = false;
     m_koRefBoard = *board;
@@ -1023,7 +993,7 @@ bool Game::loadFromFile(const std::string& filename) {
 
     // Reset timeline base to the loaded state (no undo/redo history for legacy files).
     {
-        auto& tl = ensureTimeline(this);
+        auto& tl = m_timeline;
         tl.record = true;
         tl.moves.clear();
         tl.cursor = 0;

@@ -5,6 +5,7 @@
 #include "board.h"
 #include "group.h"
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -26,14 +27,41 @@ private:
     // Fast mapping: cell -> group index, -1 if empty
     std::array<int, BOARD_CELLS> groupAt{};
 
-    // Undo/redo timeline (snapshots)
-    std::vector<Game> history;
-    std::vector<Game> future;
-
     // IMPORTANT optimization:
-    // - Main game instance records history (true)
-    // - Snapshots / copies (used in AI search, history, redo stack) do NOT record history (false)
+    // - Main game instance records move timeline (undo/redo + save)
+    // - Snapshots / copies (used in AI search) do NOT record the timeline
     bool m_enableHistory = true;
+
+
+    // Undo/redo timeline (compact): base state + move list + cursor.
+    // Stored as a member (NOT static/global) to avoid leaks and pointer-reuse bugs.
+    struct MoveRec {
+        PieceColor color = NONE;
+        int x = -1;
+        int y = -1;
+        bool isPass = false;
+    };
+
+    struct BaseState {
+        Board board;
+        PieceColor turn = BLACK;
+        int black_captures = 0;
+        int white_captures = 0;
+        int consecutive_passes = 0;
+        Board koRefBoard;
+        bool hasKoRef = false;
+        std::array<std::uint8_t, BOARD_CELLS> deadMark{};
+    };
+
+    struct Timeline {
+        BaseState base;
+        std::vector<MoveRec> moves;
+        std::size_t cursor = 0; // number of moves already applied
+        bool record = true;     // disabled during replay
+    };
+
+    Timeline m_timeline;
+
 
 
     // Simple ko reference: board position before the last move (used to detect immediate ko recapture),
@@ -75,7 +103,13 @@ public:
 
     PieceColor getTurn() const { return turn; }
     PieceColor getPiece(int x, int y) const { return board->getPiece(x, y); }
-    Board* getBoard() const { return board.get(); }
+    Board* getBoard() { return board.get(); }
+    const Board* getBoard() const { return board.get(); }
+    std::uint64_t getBoardHash() const { return m_boardHash; }
+    std::uint64_t getKoRefHash() const { return m_koRefHash; }
+    bool hasKoRef() const { return m_hasKoRef; }
+    int getBlackCaptures() const { return black_captures; }
+    int getWhiteCaptures() const { return white_captures; }
 
     PieceColor oppositeColor(PieceColor input) const;
 
@@ -86,7 +120,7 @@ public:
     bool redo();
 
     // Giữ signature cũ để không vỡ UI, nhưng logic thực dùng pass>=2.
-    bool ended(int /*x*/ = 0, int /*y*/ = 0) { return consecutive_passes >= 2; }
+    bool ended(int /*x*/ = 0, int /*y*/ = 0) const { return consecutive_passes >= 2; }
 
     // simple ko check helper (so sánh với trạng thái trước đó)
     bool checkKO() const;

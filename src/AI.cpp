@@ -10,6 +10,7 @@
 #include <random>
 #include <vector>
 #include <utility>
+#include <unordered_map>
 
 namespace {
     constexpr int kBoardSize = 19;
@@ -130,141 +131,247 @@ namespace {
     // Node budget để đảm bảo "reasonable time" cho Hard/Medium.
     struct SearchBudget { int remaining = 0; };
     thread_local SearchBudget g_budget;
+
+
+    // ---------------------------
+    // Territory estimate (Japanese-style): flood-fill empty regions and assign to the single bordering color.
+    // ---------------------------
+    thread_local StampBuf g_seenTerr;
+
+    static std::pair<int,int> estimateTerritory(const Game& game) {
+        g_seenTerr.ensureSize(kBoardSize * kBoardSize);
+        const int tok = g_seenTerr.nextToken();
+
+        int blackTerr = 0;
+        int whiteTerr = 0;
+
+        std::queue<std::pair<int,int>> q;
+        static const int dx[4] = {-1, 1, 0, 0};
+        static const int dy[4] = {0, 0, -1, 1};
+
+        for (int y = 0; y < kBoardSize; ++y) {
+            for (int x = 0; x < kBoardSize; ++x) {
+                if (game.getPiece(x, y) != NONE) continue;
+                const int sid = idx(x, y);
+                if (g_seenTerr.isMarked(sid, tok)) continue;
+
+                bool touchesBlack = false;
+                bool touchesWhite = false;
+                int regionSize = 0;
+
+                g_seenTerr.setMarked(sid, tok);
+                q.push({x, y});
+
+                while (!q.empty()) {
+                    auto [cx, cy] = q.front();
+                    q.pop();
+                    ++regionSize;
+
+                    for (int k = 0; k < 4; ++k) {
+                        int nx = cx + dx[k];
+                        int ny = cy + dy[k];
+                        if (!kinBounds(nx, ny)) continue;
+                        PieceColor p = game.getPiece(nx, ny);
+                        if (p == NONE) {
+                            const int nid = idx(nx, ny);
+                            if (!g_seenTerr.isMarked(nid, tok)) {
+                                g_seenTerr.setMarked(nid, tok);
+                                q.push({nx, ny});
+                            }
+                        } else if (p == BLACK) {
+                            touchesBlack = true;
+                        } else if (p == WHITE) {
+                            touchesWhite = true;
+                        }
+                    }
+                }
+
+                if (touchesBlack && !touchesWhite) blackTerr += regionSize;
+                else if (touchesWhite && !touchesBlack) whiteTerr += regionSize;
+            }
+        }
+        return {blackTerr, whiteTerr};
+    }
+
+    static bool hasAnyAtariGroup(const Game& game) {
+        g_seenStone.ensureSize(kBoardSize * kBoardSize);
+        const int visitedTok = g_seenStone.nextToken();
+
+        for (int y = 0; y < kBoardSize; ++y) {
+            for (int x = 0; x < kBoardSize; ++x) {
+                if (game.getPiece(x, y) == NONE) continue;
+                const int id = idx(x, y);
+                if (g_seenStone.isMarked(id, visitedTok)) continue;
+
+                GroupInfo gi = analyzeGroupFrom(game, x, y, visitedTok);
+                if (gi.atari) return true;
+            }
+        }
+        return false;
+    }
+
+    // ---------------------------
+    // Transposition table (per computeAIMove call).
+    // IMPORTANT: include ko-reference hash + turn in the key; otherwise ko positions will be mixed incorrectly.
+    // ---------------------------
+    enum class TTFlag : std::uint8_t { EXACT = 0, LOWER = 1, UPPER = 2 };
+
+    struct TTEntry {
+        std::uint64_t key = 0;
+        std::uint16_t gen = 0;
+        int depthRemaining = 0;  // how deep this entry is valid for
+        double value = 0.0;
+        TTFlag flag = TTFlag::EXACT;
+        AIMove best = AIMove(-1, -1, true);
+    };
+
+    static inline std::uint64_t rotl64(std::uint64_t x, int r) {
+        return (x << r) | (x >> (64 - r));
+    }
+
+    static inline std::uint64_t ttKey(const Game& g) {
+        std::uint64_t h = g.getBoardHash();
+        std::uint64_t k = g.hasKoRef() ? g.getKoRefHash() : 0ULL;
+        h ^= rotl64(k * 0x9e3779b97f4a7c15ULL, 17);
+        h ^= (g.getTurn() == BLACK ? 0xBADC0FFEE0DDF00DULL : 0xC001D00DCAFEBEEFULL);
+        h ^= (g.hasKoRef() ? 0xA5A5A5A5A5A5A5A5ULL : 0ULL);
+        return h;
+    }
+
+        // Fixed-size TT (direct-mapped) with generation tagging.
+    // - Much faster and lower overhead than unordered_map.
+    // - Replacement policy: keep the entry that is valid for deeper (>=) remaining depth.
+    constexpr std::size_t kTTSize = 1u << 18; // 262,144 entries
+    static std::array<TTEntry, kTTSize> g_tt{};
+    static std::uint16_t g_ttGen = 1;
+
+    static inline std::size_t ttIndex(std::uint64_t key) {
+        return static_cast<std::size_t>(key) & (kTTSize - 1);
+    }
+
+    static inline void ttNewSearch() {
+        ++g_ttGen;
+        if (g_ttGen == 0) { // wrapped
+            g_ttGen = 1;
+            for (auto& e : g_tt) { e.key = 0; e.gen = 0; }
+        }
+    }
+
+    static inline TTEntry* ttProbe(std::uint64_t key) {
+        TTEntry& e = g_tt[ttIndex(key)];
+        if (e.gen == g_ttGen && e.key == key) return &e;
+        return nullptr;
+    }
+
+    static inline void ttStore(std::uint64_t key, int depthRemaining, double value, TTFlag flag, const AIMove& best) {
+        TTEntry& e = g_tt[ttIndex(key)];
+        const bool same = (e.gen == g_ttGen && e.key == key);
+        if (!same || e.depthRemaining <= depthRemaining) {
+            e.key = key;
+            e.gen = g_ttGen;
+            e.depthRemaining = depthRemaining;
+            e.value = value;
+            e.flag = flag;
+            e.best = best;
+        }
+    }
 }
 
 double GoAI::evaluateBoardHeuristic(const Game& game, PieceColor aiColor)
 {
-    const PieceColor oppColor = game.oppositeColor(aiColor);
+    // If the game already ended (two passes), use the real scoring for maximum accuracy.
+    if (game.ended()) {
+        auto [bs, ws] = game.calculateFinalScore(6.5f);
+        double diff = static_cast<double>(bs - ws);
+        return (aiColor == BLACK) ? diff : -diff;
+    }
 
-    // ---- Group-based tactical / stability features ----
+    // --- Tactical features (old heuristic, but down-weighted late game) ---
+    PieceColor oppColor = game.oppositeColor(aiColor);
+
     g_seenStone.ensureSize(kBoardSize * kBoardSize);
     const int visitedTok = g_seenStone.nextToken();
 
     int aiStones = 0, oppStones = 0;
     int aiLib = 0, oppLib = 0;
-
     int aiAtariStones = 0;
     int oppAtariStones = 0;
 
     for (int y = 0; y < kBoardSize; ++y) {
         for (int x = 0; x < kBoardSize; ++x) {
-            PieceColor pc = game.getPiece(x, y);
-            if (pc == NONE) continue;
+            PieceColor p = game.getPiece(x, y);
+            if (p == NONE) continue;
 
             const int id = idx(x, y);
             if (g_seenStone.isMarked(id, visitedTok)) continue;
 
-            GroupInfo info = analyzeGroupFrom(game, x, y, visitedTok);
-
-            if (info.color == aiColor) {
-                aiStones += info.stones;
-                aiLib += info.liberties;
-                if (info.atari) aiAtariStones += info.stones;
-            } else if (info.color == oppColor) {
-                oppStones += info.stones;
-                oppLib += info.liberties;
-                if (info.atari) oppAtariStones += info.stones;
+            GroupInfo gi = analyzeGroupFrom(game, x, y, visitedTok);
+            if (gi.color == aiColor) {
+                aiStones += gi.stones;
+                aiLib    += gi.liberties;
+                if (gi.atari) aiAtariStones += gi.stones;
+            } else if (gi.color == oppColor) {
+                oppStones += gi.stones;
+                oppLib    += gi.liberties;
+                if (gi.atari) oppAtariStones += gi.stones;
             }
         }
     }
 
-    // ---- Simple territory estimate (no dead-mark): flood-fill empty regions ----
-    std::array<uint8_t, kBoardSize * kBoardSize> visited{};
-    visited.fill(0);
+    const double W_STONE = 1.0;
+    const double W_LIB   = 0.35;
+    const double W_ATARI = 0.70;
 
-    int aiTerr = 0, oppTerr = 0;
+    double tactical =
+        (aiStones - oppStones) * W_STONE +
+        (aiLib    - oppLib)    * W_LIB +
+        (oppAtariStones - aiAtariStones) * W_ATARI;
 
-    static const int dx4[4] = {-1, 1, 0, 0};
-    static const int dy4[4] = {0, 0, -1, 1};
+    // --- Score-aligned estimate (Japanese-style): territory + captures (+ komi to White) ---
+    const int empty = countEmpty(game);
+    const double phase = 1.0 - (double)empty / (kBoardSize * kBoardSize); // 0 early -> 1 late
 
-    std::array<int, kBoardSize * kBoardSize> q{};
-    std::array<int, kBoardSize * kBoardSize> region{};
-    int qh = 0, qt = 0, rn = 0;
+    auto [bTerr, wTerr] = estimateTerritory(game);
 
-    for (int y = 0; y < kBoardSize; ++y) {
-        for (int x = 0; x < kBoardSize; ++x) {
-            if (game.getPiece(x, y) != NONE) continue;
-            const int startId = idx(x, y);
-            if (visited[startId]) continue;
+    const int bCaps = game.getBlackCaptures();
+    const int wCaps = game.getWhiteCaptures();
+    constexpr double KOMI = 6.5;
 
-            bool touchesAI = false;
-            bool touchesOpp = false;
+    double baseDiffBlack =
+        (double)(bTerr + bCaps) - (double)(wTerr + wCaps) - KOMI;
 
-            qh = qt = rn = 0;
-            q[qt++] = startId;
-            visited[startId] = 1;
+    double base = (aiColor == BLACK) ? baseDiffBlack : -baseDiffBlack;
 
-            while (qh < qt) {
-                const int id = q[qh++];
-                region[rn++] = id;
+    // Blend: early game rely more on tactical stability; late game rely more on score estimate.
+    const double baseW = 0.25 + 0.75 * phase;
+    const double tactW = 0.35 * (1.0 - phase);
 
-                const int cx = id % kBoardSize;
-                const int cy = id / kBoardSize;
-
-                for (int d = 0; d < 4; ++d) {
-                    const int nx = cx + dx4[d];
-                    const int ny = cy + dy4[d];
-                    if (!kinBounds(nx, ny)) continue;
-
-                    PieceColor p = game.getPiece(nx, ny);
-                    if (p == NONE) {
-                        const int nid = idx(nx, ny);
-                        if (!visited[nid]) {
-                            visited[nid] = 1;
-                            q[qt++] = nid;
-                        }
-                    } else if (p == aiColor) {
-                        touchesAI = true;
-                    } else if (p == oppColor) {
-                        touchesOpp = true;
-                    }
-                }
-            }
-
-            if (touchesAI && !touchesOpp) aiTerr += rn;
-            else if (touchesOpp && !touchesAI) oppTerr += rn;
-        }
-    }
-
-    // ---- Phase-aware weights ----
-    const int emptyNow = countEmpty(game);
-    const double phase = std::clamp((361.0 - emptyNow) / 361.0, 0.0, 1.0); // 0 early -> 1 late
-
-    const double W_STONE = 0.65 + 0.35 * phase;   // stones matter more late
-    const double W_LIB   = 0.30;                  // stability
-    const double W_ATARI = 0.75;                  // tactical threats
-    const double W_TERR  = 0.95;                  // territory estimate
-
-    const double stoneDiff = (aiStones - oppStones) * W_STONE;
-    const double libDiff   = (aiLib - oppLib) * W_LIB;
-    const double atariDiff = (oppAtariStones - aiAtariStones) * W_ATARI;
-    const double terrDiff  = (aiTerr - oppTerr) * W_TERR;
-
-    // Slightly discourage "all-in atari trading" when very early: needs territory too.
-    const double earlyStabilityBonus = (phase < 0.25) ? (0.10 * libDiff + 0.15 * terrDiff) : 0.0;
-
-    return stoneDiff + libDiff + atariDiff + terrDiff + earlyStabilityBonus;
+    return baseW * base + tactW * tactical;
 }
 
 
-std::vector<AIMove>  GoAI::generateCandidateMoves(const Game& game)
+std::vector<AIMove> GoAI::generateCandidateMoves(const Game& game)
 {
     struct ScoredMove { AIMove m; int s; };
     std::vector<ScoredMove> scored;
 
-    // If board empty: play center (stable opening)
-    bool anyStone = false;
-    for (int y = 0; y < kBoardSize && !anyStone; ++y) {
-        for (int x = 0; x < kBoardSize; ++x) {
-            if (game.getPiece(x, y) != NONE) { anyStone = true; break; }
-        }
+    // Nếu bàn trống: ưu tiên 4-4 (corner) thay vì tengen để AI nhìn "đúng Go" hơn.
+bool anyStone = false;
+for (int y = 0; y < kBoardSize && !anyStone; ++y) {
+    for (int x = 0; x < kBoardSize; ++x) {
+        if (game.getPiece(x, y) != NONE) { anyStone = true; break; }
     }
-    if (!anyStone) {
-        const int c = kBoardSize / 2;
-        return { AIMove(c, c, false) };
-    }
+}
+if (!anyStone) {
+    static const std::pair<int,int> corners[] = {
+        {3,3}, {3,15}, {15,3}, {15,15}
+    };
+    std::uniform_int_distribution<int> pick(0, 3);
+    auto [x, y] = corners[pick(globalRng())];
+    return { AIMove(x, y, false) };
+}
 
-    const PieceColor aiColor  = game.getTurn();
+const PieceColor aiColor  = game.getTurn();
     const PieceColor oppColor = game.oppositeColor(aiColor);
 
     constexpr int R = 2;
@@ -277,7 +384,6 @@ std::vector<AIMove>  GoAI::generateCandidateMoves(const Game& game)
         candMask[idx(x, y)] = 1;
     };
 
-    // Local candidates: within manhattan radius R of any existing stone.
     for (int y = 0; y < kBoardSize; ++y) {
         for (int x = 0; x < kBoardSize; ++x) {
             if (game.getPiece(x, y) == NONE) continue;
@@ -291,8 +397,6 @@ std::vector<AIMove>  GoAI::generateCandidateMoves(const Game& game)
     }
 
     const int stonesNow = countStones(game);
-
-    // Opening support: star points (19x19 fixed).
     if (stonesNow <= 10) {
         const std::pair<int,int> star[] = {
             {3,3}, {3,15}, {15,3}, {15,15},
@@ -302,75 +406,108 @@ std::vector<AIMove>  GoAI::generateCandidateMoves(const Game& game)
         for (auto [sx, sy] : star) tryAdd(sx, sy);
     }
 
-    // Add a few "global" candidates so the AI can tenuki / play big points,
-    // even when fights are local.
-    // (We keep this small to avoid blowing up branching.)
-    if (stonesNow >= 8) {
-        struct GlobalCand { int pot; int x; int y; };
-        std::vector<GlobalCand> globals;
-        globals.reserve(128);
-
-        auto centerBias = [&](int x, int y) {
-            // 0..18-ish, gentle bias only
-            int cb = 18 - (std::abs(x - 9) + std::abs(y - 9));
-            return cb;
-        };
-
-        for (int y = 0; y < kBoardSize; ++y) {
-            for (int x = 0; x < kBoardSize; ++x) {
-                const int id = idx(x, y);
-                if (candMask[id]) continue;
-                if (game.getPiece(x, y) != NONE) continue;
-
-                int emptyAdj = 0;
-                int aiAdj = 0;
-                int oppAdj = 0;
-
-                static const int dx4[4] = {-1, 1, 0, 0};
-                static const int dy4[4] = {0, 0, -1, 1};
-
-                for (int d = 0; d < 4; ++d) {
-                    int nx = x + dx4[d];
-                    int ny = y + dy4[d];
-                    if (!kinBounds(nx, ny)) continue;
-
-                    PieceColor p = game.getPiece(nx, ny);
-                    if (p == NONE) ++emptyAdj;
-                    else if (p == aiColor) ++aiAdj;
-                    else if (p == oppColor) ++oppAdj;
-                }
-
-                // Avoid obvious eye-fills as "global" suggestions.
-                if (emptyAdj == 0 && oppAdj == 0 && aiAdj >= 3) continue;
-
-                const int distEdge = std::min(std::min(x, y), std::min(18 - x, 18 - y));
-                int pot = emptyAdj * 5 + distEdge * 2 + centerBias(x, y) / 2;
-
-                globals.push_back({ pot, x, y });
-            }
-        }
-
-        std::sort(globals.begin(), globals.end(),
-                  [](const GlobalCand& a, const GlobalCand& b) { return a.pot > b.pot; });
-
-        const int GLOBAL_ADD = 12;
-        for (int i = 0; i < (int)globals.size() && i < GLOBAL_ADD; ++i) {
-            tryAdd(globals[i].x, globals[i].y);
-        }
-    }
-
-    // If somehow still empty, fall back to "all empties".
     int candCount = 0;
     for (auto v : candMask) candCount += (v != 0);
     if (candCount == 0) {
         for (int y = 0; y < kBoardSize; ++y)
             for (int x = 0; x < kBoardSize; ++x)
-                if (game.getPiece(x, y) == NONE) candMask[idx(x, y)] = 1;
+                if (game.getPiece(x, y) == NONE) candMask[idx(x,y)] = 1;
     }
 
-    // Cache group stats for neighbor-based scoring:
-    // - liberties: to detect atari
-    // - stones: to scale capture/save bonuses
+    // ---- Global candidates (tenuki / big points) ----
+    // Ý tưởng: candidate hiện tại quá "local" (chỉ quanh nhóm đang giao tranh) -> AI hay bỏ lỡ nước lớn ở xa.
+    // Ta thêm một ít điểm trống "xa quân" dựa trên khoảng cách Manhattan tới quân gần nhất.
+    std::array<int16_t, kBoardSize * kBoardSize> distToStone;
+    distToStone.fill(-1);
+
+    std::array<int, kBoardSize * kBoardSize> qDist;
+    int qhDist = 0, qtDist = 0;
+
+    static const int ddx4[4] = {-1, 1, 0, 0};
+    static const int ddy4[4] = {0, 0, -1, 1};
+
+    for (int y = 0; y < kBoardSize; ++y) {
+        for (int x = 0; x < kBoardSize; ++x) {
+            if (game.getPiece(x, y) == NONE) continue;
+            const int id = idx(x, y);
+            distToStone[id] = 0;
+            qDist[qtDist++] = id;
+        }
+    }
+
+    while (qhDist < qtDist) {
+        const int id = qDist[qhDist++];
+        const int cx = id % kBoardSize;
+        const int cy = id / kBoardSize;
+
+        for (int k = 0; k < 4; ++k) {
+            const int nx = cx + ddx4[k];
+            const int ny = cy + ddy4[k];
+            if (!kinBounds(nx, ny)) continue;
+            const int nid = idx(nx, ny);
+            if (distToStone[nid] != -1) continue;
+            distToStone[nid] = static_cast<int16_t>(distToStone[id] + 1);
+            qDist[qtDist++] = nid;
+        }
+    }
+
+    // Nếu candidate set quá nhỏ/local, thêm một số điểm "global" dựa trên distToStone.
+    if (candCount > 0 && candCount < 90) {
+        int extraGlobal = 0;
+        if (stonesNow <= 24) extraGlobal = 18;
+        else if (stonesNow <= 60) extraGlobal = 12;
+        else if (stonesNow <= 120) extraGlobal = 8;
+
+        if (extraGlobal > 0) {
+            struct Glob { int id; int score; };
+            std::vector<Glob> glob;
+            glob.reserve(kBoardSize * kBoardSize);
+
+            const int c = kBoardSize / 2;
+            for (int y = 0; y < kBoardSize; ++y) {
+                for (int x = 0; x < kBoardSize; ++x) {
+                    const int id = idx(x, y);
+                    if (candMask[id]) continue;
+                    if (game.getPiece(x, y) != NONE) continue;
+
+                    int d = distToStone[id];
+                    if (d < 0) d = 0;
+
+                    const int centerDist = std::abs(x - c) + std::abs(y - c);
+                    const int toEdge = std::min(std::min(x, y), std::min(kBoardSize - 1 - x, kBoardSize - 1 - y));
+
+                    // "big point" bias: prefer far-from-stones, and also slightly prefer corners/sides and center over 2nd-line.
+                    const int farScore = 8 * d;
+                    const int centerBonus = std::max(-3, 6 - centerDist / 2);
+                    // Prefer "big points" near corner frameworks (around 4-4 / 3-4 / 4-3),
+                    // but strongly avoid 1st/2nd line in the opening.
+                    const int cx1 = 3, cx2 = kBoardSize - 4;
+                    const int cy1 = 3, cy2 = kBoardSize - 4;
+                    const int cornerDist =
+                        std::min(std::min(std::abs(x - cx1) + std::abs(y - cy1),
+                                          std::abs(x - cx1) + std::abs(y - cy2)),
+                                 std::min(std::abs(x - cx2) + std::abs(y - cy1),
+                                          std::abs(x - cx2) + std::abs(y - cy2)));
+                    const int cornerBonus = std::max(0, 10 - cornerDist);
+                    
+                    const int firstLinePenalty = (toEdge == 0 ? 12 : (toEdge == 1 ? 5 : 0));
+                    const int score = farScore + centerBonus + cornerBonus - firstLinePenalty;
+
+                    glob.push_back({ id, score });
+                }
+            }
+
+            std::sort(glob.begin(), glob.end(), [](const Glob& a, const Glob& b) { return a.score > b.score; });
+
+            const int take = std::min<int>(extraGlobal, (int)glob.size());
+            for (int i = 0; i < take; ++i) {
+                candMask[glob[i].id] = 1;
+            }
+        }
+    }
+
+    //    - liberties: để check atari
+    //    - stones: để thưởng capture theo số quân có thể bắt/cứu
     std::array<int, kBoardSize * kBoardSize> libCache;
     std::array<int, kBoardSize * kBoardSize> sizeCache;
     libCache.fill(-1);
@@ -406,12 +543,12 @@ std::vector<AIMove>  GoAI::generateCandidateMoves(const Game& game)
         int liberties = 0;
 
         while (!q.empty()) {
-            auto [cx, cy] = q.front();
+            auto [x, y] = q.front();
             q.pop();
 
-            for (int d = 0; d < 4; ++d) {
-                int nx = cx + dx4[d];
-                int ny = cy + dy4[d];
+            for (int dir = 0; dir < 4; ++dir) {
+                int nx = x + dx4[dir];
+                int ny = y + dy4[dir];
                 if (!kinBounds(nx, ny)) continue;
 
                 PieceColor p = game.getPiece(nx, ny);
@@ -440,15 +577,28 @@ std::vector<AIMove>  GoAI::generateCandidateMoves(const Game& game)
         return {liberties, stones};
     };
 
-    scored.reserve(128);
+
+    scored.reserve(candCount);
 
     for (int y = 0; y < kBoardSize; ++y) {
         for (int x = 0; x < kBoardSize; ++x) {
-            if (!candMask[idx(x, y)]) continue;
+            if (!candMask[idx(x,y)]) continue;
 
+            const int cid = idx(x, y);
             int score = 0;
 
-            // Opening: mild bias toward star-ish points
+            // Global expansion bias (opening/mid): reward "big points" away from current clusters.
+            int d = distToStone[cid];
+            if (d < 0) d = 0;
+            if (stonesNow <= 120) {
+                const int toEdge = std::min(std::min(x, y),
+                                            std::min(kBoardSize - 1 - x, kBoardSize - 1 - y));
+                int bonus = std::min(8, d);
+                if (toEdge == 0) bonus -= 6;       // 1st line is usually bad early
+                else if (toEdge == 1) bonus -= 3;  // 2nd line also often small
+                score += bonus;
+            }
+
             if (stonesNow <= 10) {
                 if ((x == 3 || x == 15) && (y == 3 || y == 15)) score += 6; // 4-4
                 if ((x == 3 || x == 15) && y == 9) score += 3;
@@ -456,48 +606,25 @@ std::vector<AIMove>  GoAI::generateCandidateMoves(const Game& game)
                 if (x == 9 && y == 9) score += 4;
             }
 
-            int emptyAdj = 0;
-            int aiAdj = 0;
-            int oppAdj = 0;
-            bool wouldCapture = false;
-
-            for (int d = 0; d < 4; ++d) {
-                int nx = x + dx4[d];
-                int ny = y + dy4[d];
+            for (int dir = 0; dir < 4; ++dir) {
+                int nx = x + dx4[dir];
+                int ny = y + dy4[dir];
                 if (!kinBounds(nx, ny)) continue;
 
                 PieceColor p = game.getPiece(nx, ny);
                 if (p == NONE) {
-                    ++emptyAdj;
                     score += 1;
                 } else if (p == oppColor) {
-                    ++oppAdj;
+                    // nếu group địch đang ở atari và (x,y) kề nó => có khả năng là liberty cuối => bắt
                     auto [libs, stones] = groupStatsCached(nx, ny);
-                    if (libs == 1) {
-                        wouldCapture = true;
-                        score += 30 + 3 * stones; // capture atari group
-                    }
+                    if (libs == 1) score += 30 + 3 * stones;
                 } else if (p == aiColor) {
-                    ++aiAdj;
+                    // cứu group mình ở atari
                     auto [libs, stones] = groupStatsCached(nx, ny);
-                    if (libs == 1) score += 18 + 2 * stones; // save atari group
-                    score += 3; // connection tendency
+                    if (libs == 1) score += 18 + 2 * stones;
+                    // nối group
+                    score += 3;
                 }
-            }
-
-            // Global shape: prefer moves with more breathing room.
-            score += emptyAdj * 2;
-
-            // Penalize obvious self-atari / eye fill when not capturing.
-            // (Not perfect, but reduces silly moves a lot.)
-            if (!wouldCapture) {
-                if (emptyAdj == 0 && oppAdj == 0 && aiAdj >= 3) score -= 80;  // filling own eye
-                else if (emptyAdj <= 1 && oppAdj == 0) score -= 18;            // likely self-atari
-            }
-
-            // Small edge/corner penalty in very early game (avoid 1-1 / 2-1 junk)
-            if (stonesNow <= 12) {
-                if (x <= 1 || x >= 17 || y <= 1 || y >= 17) score -= 6;
             }
 
             scored.push_back({ AIMove(x, y, false), score });
@@ -513,7 +640,6 @@ std::vector<AIMove>  GoAI::generateCandidateMoves(const Game& game)
 
     return moves;
 }
-
 
 // Minimax (Medium) với cắt candidate để giảm branching
 double GoAI::minimax(Game game,
@@ -533,83 +659,40 @@ double GoAI::minimax(Game game,
 
     std::vector<AIMove> moves = generateCandidateMoves(game);
 
-    // Beam in search to keep time stable
+    // Beam trong search để giữ thời gian ổn định
     int limit = 40;
     if (maxDepth >= 3) limit = 28;
     if (depth >= maxDepth - 1) limit = 14;
     if ((int)moves.size() > limit) moves.resize(limit);
 
-    // Consider PASS as a real action in late game so minimax can reason about ending.
-    const int emptyNow = countEmpty(game);
-    const bool allowPass = (emptyNow <= 40);
-    if (allowPass) moves.push_back(AIMove(-1, -1, true));
-
     bool anyValidChild = false;
 
     if (maximizingPlayer) {
         double bestValue = -std::numeric_limits<double>::infinity();
-
         for (const AIMove& m : moves) {
             Game child = game;
-
-            bool ok = false;
-            bool finished = false;
-
-            if (m.isPass) {
-                finished = child.pass();
-                ok = true;
-            } else {
-                ok = child.placeStone(m.x, m.y);
-            }
-
-            if (!ok) continue;
+            if (!child.placeStone(m.x, m.y)) continue;
             anyValidChild = true;
 
-            double val = finished
-                ? evaluateBoardHeuristic(child, aiColor)
-                : minimax(child, depth + 1, maxDepth, false, aiColor);
-
-            // Discourage premature pass (even if allowed), unless very late.
-            if (m.isPass && emptyNow > 25) val -= 0.8;
-
+            double val = minimax(child, depth + 1, maxDepth, false, aiColor);
             if (val > bestValue) bestValue = val;
         }
-
         if (!anyValidChild) return evaluateBoardHeuristic(game, aiColor);
         return bestValue;
     } else {
         double bestValue = +std::numeric_limits<double>::infinity();
-
         for (const AIMove& m : moves) {
             Game child = game;
-
-            bool ok = false;
-            bool finished = false;
-
-            if (m.isPass) {
-                finished = child.pass();
-                ok = true;
-            } else {
-                ok = child.placeStone(m.x, m.y);
-            }
-
-            if (!ok) continue;
+            if (!child.placeStone(m.x, m.y)) continue;
             anyValidChild = true;
 
-            double val = finished
-                ? evaluateBoardHeuristic(child, aiColor)
-                : minimax(child, depth + 1, maxDepth, true, aiColor);
-
-            if (m.isPass && emptyNow > 25) val += 0.8; // opponent passing early is good for us
-
+            double val = minimax(child, depth + 1, maxDepth, true, aiColor);
             if (val < bestValue) bestValue = val;
         }
-
         if (!anyValidChild) return evaluateBoardHeuristic(game, aiColor);
         return bestValue;
     }
 }
-
 
 // Minimax + Alpha–Beta (Hard) + beam limit
 double GoAI::minimaxAlphaBeta(Game game,
@@ -620,91 +703,163 @@ double GoAI::minimaxAlphaBeta(Game game,
                               bool maximizingPlayer,
                               PieceColor aiColor)
 {
+    // Wrapper: Hard uses 1-ply quiescence extension in noisy positions.
+    return minimaxAlphaBetaQ(std::move(game), depth, maxDepth, /*qDepthLeft=*/1, alpha, beta, maximizingPlayer, aiColor);
+}
+
+double GoAI::minimaxAlphaBetaQ(Game game,
+                               int depth,
+                               int maxDepth,
+                               int qDepthLeft,
+                               double alpha,
+                               double beta,
+                               bool maximizingPlayer,
+                               PieceColor aiColor)
+{
     if (g_budget.remaining <= 0) {
         return evaluateBoardHeuristic(game, aiColor);
     }
     g_budget.remaining--;
 
+    // Quiescence: if we're at the leaf but the position is tactically unstable (atari exists),
+    // extend by 1 ply (limited times).
+    int effectiveMaxDepth = maxDepth;
+    bool usedQ = false;
     if (depth >= maxDepth) {
-        return evaluateBoardHeuristic(game, aiColor);
+        if (qDepthLeft > 0 && hasAnyAtariGroup(game)) {
+            effectiveMaxDepth = maxDepth + 1;
+            usedQ = true;
+        } else {
+            return evaluateBoardHeuristic(game, aiColor);
+        }
     }
+    const int nextQ = qDepthLeft - (usedQ ? 1 : 0);
 
+    const int depthRemaining = effectiveMaxDepth - depth;
+
+    // --- Transposition table lookup ---
+const std::uint64_t key = ttKey(game);
+TTEntry* tte = ttProbe(key);
+if (tte && tte->depthRemaining >= depthRemaining) {
+    const TTEntry& e = *tte;
+    if (e.flag == TTFlag::EXACT) return e.value;
+    if (e.flag == TTFlag::LOWER) alpha = std::max(alpha, e.value);
+    else if (e.flag == TTFlag::UPPER) beta = std::min(beta, e.value);
+    if (alpha >= beta) return e.value;
+}
+
+const double alphaOrig = alpha;
+    const double betaOrig  = beta;
+
+    // Generate and limit candidates (beam) to keep search time reasonable.
     std::vector<AIMove> moves = generateCandidateMoves(game);
-
     int limit = 30;
-    if (depth >= maxDepth - 1) limit = 14;
+    if (depth >= effectiveMaxDepth - 1) limit = 14;
+    if (usedQ) limit = std::min(limit, 12);
     if ((int)moves.size() > limit) moves.resize(limit);
 
-    const int emptyNow = countEmpty(game);
-    const bool allowPass = (emptyNow <= 40);
-    if (allowPass) moves.push_back(AIMove(-1, -1, true));
+    // Move ordering: try TT best move first if present.
+    AIMove ttBest(-1, -1, true);
+    if (tte) ttBest = tte->best;
+    if (!ttBest.isPass && ttBest.x >= 0) {
+        for (std::size_t i = 0; i < moves.size(); ++i) {
+            if (!moves[i].isPass && moves[i].x == ttBest.x && moves[i].y == ttBest.y) {
+                std::swap(moves[0], moves[i]);
+                break;
+            }
+        }
+    }
+
+    const bool allowPass = (countEmpty(game) <= 40);
+    constexpr double PASS_PENALTY = 0.15;
 
     bool anyValidChild = false;
+    AIMove bestMove(-1, -1, true);
 
     if (maximizingPlayer) {
         double bestValue = -std::numeric_limits<double>::infinity();
 
+        // Consider PASS (late game) and/or when TT suggests it.
+        if (allowPass || ttBest.isPass) {
+            Game child = game;
+            (void)child.pass();
+            anyValidChild = true;
+            double val = minimaxAlphaBetaQ(child, depth + 1, effectiveMaxDepth, nextQ, alpha, beta, false, aiColor);
+            val -= PASS_PENALTY;
+            if (val > bestValue) { bestValue = val; bestMove = AIMove(-1, -1, true); }
+            alpha = std::max(alpha, bestValue);
+        }
+
         for (const AIMove& m : moves) {
             Game child = game;
-
-            bool ok = false;
-            bool finished = false;
-
-            if (m.isPass) {
-                finished = child.pass();
-                ok = true;
-            } else {
-                ok = child.placeStone(m.x, m.y);
-            }
-
-            if (!ok) continue;
+            if (!child.placeStone(m.x, m.y)) continue;
             anyValidChild = true;
 
-            double val = finished
-                ? evaluateBoardHeuristic(child, aiColor)
-                : minimaxAlphaBeta(child, depth + 1, maxDepth, alpha, beta, false, aiColor);
+            double val = minimaxAlphaBetaQ(child, depth + 1, effectiveMaxDepth, nextQ, alpha, beta, false, aiColor);
+            if (val > bestValue) { bestValue = val; bestMove = m; bestMove.isPass = false; }
 
-            if (m.isPass && emptyNow > 25) val -= 0.8;
-
-            if (val > bestValue) bestValue = val;
-            if (val > alpha) alpha = val;
+            alpha = std::max(alpha, bestValue);
             if (beta <= alpha) break;
         }
 
-        if (!anyValidChild) return evaluateBoardHeuristic(game, aiColor);
-        return bestValue;
+        // If no legal stone move and we didn't try pass earlier, pass as a fallback.
+        if (!anyValidChild) {
+            Game child = game;
+            (void)child.pass();
+            bestValue = minimaxAlphaBetaQ(child, depth + 1, effectiveMaxDepth, nextQ, alpha, beta, false, aiColor) - PASS_PENALTY;
+            bestMove = AIMove(-1, -1, true);
+            anyValidChild = true;
+        }
+
+        // Store to TT
+TTFlag f;
+if (bestValue <= alphaOrig) f = TTFlag::UPPER;
+else if (bestValue >= betaOrig) f = TTFlag::LOWER;
+else f = TTFlag::EXACT;
+
+ttStore(key, depthRemaining, bestValue, f, bestMove);
+return bestValue;
     } else {
         double bestValue = +std::numeric_limits<double>::infinity();
 
+        // Consider PASS (late game)
+        if (allowPass || ttBest.isPass) {
+            Game child = game;
+            (void)child.pass();
+            anyValidChild = true;
+            double val = minimaxAlphaBetaQ(child, depth + 1, effectiveMaxDepth, nextQ, alpha, beta, true, aiColor);
+            // Do NOT penalize opponent pass; it can be correct when they are ahead.
+            if (val < bestValue) { bestValue = val; bestMove = AIMove(-1, -1, true); }
+            beta = std::min(beta, bestValue);
+        }
+
         for (const AIMove& m : moves) {
             Game child = game;
-
-            bool ok = false;
-            bool finished = false;
-
-            if (m.isPass) {
-                finished = child.pass();
-                ok = true;
-            } else {
-                ok = child.placeStone(m.x, m.y);
-            }
-
-            if (!ok) continue;
+            if (!child.placeStone(m.x, m.y)) continue;
             anyValidChild = true;
 
-            double val = finished
-                ? evaluateBoardHeuristic(child, aiColor)
-                : minimaxAlphaBeta(child, depth + 1, maxDepth, alpha, beta, true, aiColor);
+            double val = minimaxAlphaBetaQ(child, depth + 1, effectiveMaxDepth, nextQ, alpha, beta, true, aiColor);
+            if (val < bestValue) { bestValue = val; bestMove = m; bestMove.isPass = false; }
 
-            if (m.isPass && emptyNow > 25) val += 0.8;
-
-            if (val < bestValue) bestValue = val;
-            if (val < beta) beta = val;
+            beta = std::min(beta, bestValue);
             if (beta <= alpha) break;
         }
 
-        if (!anyValidChild) return evaluateBoardHeuristic(game, aiColor);
-        return bestValue;
+        if (!anyValidChild) {
+            Game child = game;
+            (void)child.pass();
+            bestValue = minimaxAlphaBetaQ(child, depth + 1, effectiveMaxDepth, nextQ, alpha, beta, true, aiColor);
+            bestMove = AIMove(-1, -1, true);
+            anyValidChild = true;
+        }
+
+        TTFlag f;
+if (bestValue <= alphaOrig) f = TTFlag::UPPER;
+else if (bestValue >= betaOrig) f = TTFlag::LOWER;
+else f = TTFlag::EXACT;
+
+ttStore(key, depthRemaining, bestValue, f, bestMove);
+return bestValue;
     }
 }
 
@@ -735,6 +890,10 @@ AIMove GoAI::computeAIMove(const Game& game, AIDifficulty difficulty)
     g_budget.remaining = (difficulty == AIDifficulty::MEDIUM) ? 2500 : 12000;
 
     const bool useAlphaBeta = (difficulty == AIDifficulty::HARD);
+
+    if (useAlphaBeta) {
+        ttNewSearch();
+    }
 
     // Root beam
     const int ROOT_LIMIT = (difficulty == AIDifficulty::HARD) ? 40 : 60;
@@ -803,10 +962,11 @@ AIMove GoAI::computeAIMove(const Game& game, AIDifficulty difficulty)
 
 AIMoveOutcome GoAI::playAIMoveWithOutcome(Game& game, AIDifficulty difficulty)
 {
-    // NOTE:
-    // - In AI search we use Game copies (snapshots) for speed.
-    // - We still ALWAYS validate moves on the real `game` when actually playing,
-    //   so all rules (including KO / suicide / occupancy) are enforced.
+    // NOTE (sync with optimized Game):
+    // - In AI search we use Game copies (snapshots) to avoid recording history.
+    // - That means KO may not be checked inside the copies.
+    // -> So when we actually PLAY, we always validate on the real `game` and
+    //    skip any move that the real rules reject (e.g., KO recapture).
 
     const PieceColor aiColor = game.getTurn();
 
@@ -838,6 +998,10 @@ AIMoveOutcome GoAI::playAIMoveWithOutcome(Game& game, AIDifficulty difficulty)
     g_budget.remaining = (difficulty == AIDifficulty::MEDIUM) ? 2500 : 12000;
 
     const bool useAlphaBeta = (difficulty == AIDifficulty::HARD);
+
+    if (useAlphaBeta) {
+        ttNewSearch();
+    }
     const int ROOT_LIMIT = (difficulty == AIDifficulty::HARD) ? 40 : 60;
 
     struct RootChoice { AIMove move; double score; };
