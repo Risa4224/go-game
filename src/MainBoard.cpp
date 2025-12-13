@@ -326,6 +326,8 @@ MainBoard::MainBoard(std::shared_ptr<Context> &context)
 
 void MainBoard::Init()
 {
+    cancelAIWorker();
+
     std::cout << "[MainBoard] Init START\n";
 
     auto winSize = m_context->m_window->getSize();
@@ -529,12 +531,68 @@ void MainBoard::handleGameOver()
     m_context->m_states->Add(std::make_unique<PauseState>(m_context, PauseState::Mode::GameOver, msg), false);
 }
 
-void MainBoard::maybeRunAITurn()
+MainBoard::~MainBoard()
+{
+    cancelAIWorker();
+}
+
+bool MainBoard::aiBusy() const
+{
+    if (!isAIMode() || !m_game)
+        return false;
+    // If it's AI's turn or we have a pending/result AI computation, we consider AI "busy".
+    return (m_game->getTurn() == aiColor()) || m_aiThinking.load() || m_aiResultReady.load();
+}
+
+void MainBoard::cancelAIWorker()
+{
+    // Join worker if running.
+    if (m_aiThread.joinable())
+        m_aiThread.join();
+
+    m_aiThinking.store(false);
+    m_aiResultReady.store(false);
+}
+
+void MainBoard::queueAITurn(float delaySeconds)
 {
     if (!isAIMode() || !m_game || m_game->getTurn() != aiColor())
         return;
 
-    AIMove mv = GoAI::computeAIMove(*m_game, m_context->m_aiDifficulty);
+    // Already computing or already have a result waiting for delay -> don't queue again.
+    if (m_aiThinking.load() || m_aiResultReady.load())
+        return;
+
+    // Ensure old thread (if any) is cleaned up.
+    if (m_aiThread.joinable())
+        m_aiThread.join();
+
+    m_aiDelaySeconds = delaySeconds;
+    m_aiDelayClock.restart();
+
+    m_aiThinking.store(true);
+    m_aiResultReady.store(false);
+
+    // Compute AI move in background so UI can render the human move instantly.
+    m_aiThread = std::thread([this]()
+    {
+        AIMove mv = GoAI::computeAIMove(*m_game, m_context->m_aiDifficulty);
+
+        {
+            std::lock_guard<std::mutex> lk(m_aiMutex);
+            m_aiResult = mv;
+        }
+
+        m_aiResultReady.store(true);
+        m_aiThinking.store(false);
+    });
+}
+
+void MainBoard::applyAIMove(const AIMove &mv)
+{
+    if (!m_game || !isAIMode() || m_game->getTurn() != aiColor())
+        return;
+
     if (mv.isPass)
     {
         m_moveRedo.clear();
@@ -566,10 +624,52 @@ void MainBoard::maybeRunAITurn()
     }
     else
     {
+        // Fallback: if AI somehow produced an invalid move, pass.
         if (m_game->pass())
             handleGameOver();
     }
 }
+
+void MainBoard::pollAITurn()
+{
+    if (!isAIMode() || !m_game)
+        return;
+
+    // If it's AI's turn and nothing is queued yet, queue it (works for AI-first scenarios too).
+    if (m_game->getTurn() == aiColor() && !m_aiThinking.load() && !m_aiResultReady.load())
+    {
+        queueAITurn(3.f);
+        return;
+    }
+
+    // If result is ready, wait until the delay has passed, then apply.
+    if (m_game->getTurn() == aiColor() && m_aiResultReady.load())
+    {
+        if (m_aiDelayClock.getElapsedTime().asSeconds() < m_aiDelaySeconds)
+            return;
+
+        AIMove mv;
+        {
+            std::lock_guard<std::mutex> lk(m_aiMutex);
+            mv = m_aiResult;
+        }
+
+        m_aiResultReady.store(false);
+
+        if (m_aiThread.joinable())
+            m_aiThread.join();
+
+        applyAIMove(mv);
+    }
+}
+
+void MainBoard::maybeRunAITurn()
+{
+    // Old synchronous behavior caused ~3s freeze.
+    // Now we queue AI in background and apply after a delay in Update().
+    queueAITurn(3.f);
+}
+
 
 void MainBoard::setNotification(const std::string &msg)
 {
@@ -720,7 +820,10 @@ void MainBoard::Update(sf::Time)
             m_notificationText.clear();
         }
     }
+
+    pollAITurn();
 }
+
 
 void MainBoard::Draw()
 {
@@ -1445,6 +1548,8 @@ void MainBoard::ProcessInput()
 
 void MainBoard::resetGame()
 {
+    cancelAIWorker();
+
     m_game = std::make_unique<Game>(new Board());
     m_stones.clear();
     rebuildStonesFromGame();

@@ -4,10 +4,15 @@
 #include <vector>
 #include <optional>
 #include <string>
+#include <SFML/System/Clock.hpp>
+#include <atomic>
+#include <mutex>
+#include <thread>
 
 #include "State.hpp"
 #include "GameApp.h"
 #include "game.h"
+#include "AI.h"
 
 #include <SFML/Graphics/RectangleShape.hpp>
 #include <SFML/Graphics/Texture.hpp>
@@ -86,6 +91,16 @@ private:
 
     std::unique_ptr<Game> m_game;
 
+    // --- Async AI move (prevents UI freeze) ---
+    std::thread m_aiThread;
+    mutable std::mutex m_aiMutex;
+    std::atomic<bool> m_aiThinking{false};
+    std::atomic<bool> m_aiResultReady{false};
+    AIMove m_aiResult;
+    sf::Clock m_aiDelayClock;
+    float m_aiDelaySeconds{3.f};
+
+
     void setNotification(const std::string &msg);
     void buildGrid();
     void loadStoneTexturesFromFiles();
@@ -99,7 +114,12 @@ private:
     bool isAIMode() const;
     PieceColor humanColor() const;
     PieceColor aiColor() const;
-    void maybeRunAITurn();
+    void maybeRunAITurn(); // queues AI in background
+    void queueAITurn(float delaySeconds);
+    void pollAITurn();
+    void applyAIMove(const AIMove& mv);
+    void cancelAIWorker();
+    bool aiBusy() const;
     void handleGameOver();
     
     // Sounds
@@ -112,7 +132,7 @@ private:
     std::vector<std::string> m_moveRedo;
 public:
     MainBoard(std::shared_ptr<Context> &context);
-    ~MainBoard() override = default;
+    ~MainBoard() override;
 
     void Init() override;
     void ProcessInput() override;
