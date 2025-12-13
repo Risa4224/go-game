@@ -36,6 +36,12 @@ private:
     sf::Text           m_themeValue;
     bool               m_themeHovered = false;
 
+    // Stone theme row
+    sf::RectangleShape m_stoneBox;
+    sf::Text           m_stoneLabel;
+    sf::Text           m_stoneValue;
+    bool               m_stoneHovered = false;
+
     // Back button
     sf::RectangleShape m_backBox;
     sf::Text           m_backText;
@@ -48,6 +54,9 @@ private:
 
     void  LayoutThemeRow();
     void  RefreshThemeText();
+
+    void  LayoutStoneRow();
+    void  RefreshStoneText();
 
 public:
     explicit SettingsState(std::shared_ptr<Context>& context);

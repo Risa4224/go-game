@@ -198,10 +198,154 @@ void MainBoard::Init()
     if (!m_game)
         m_game = std::make_unique<Game>(new Board());
 
+    // Load stone textures once (optional: falls back to flat colors if files are missing).
+    loadStoneTexturesFromFiles();
+
+    // Cache the current stone theme so we can refresh visuals if the user changes it in Settings.
+    if (m_context)
+        m_lastStoneTheme = m_context->m_stoneTheme;
+
     rebuildStonesFromGame();
     maybeRunAITurn();
 
     std::cout << "[MainBoard] Init END\n";
+}
+
+void MainBoard::loadStoneTexturesFromFiles()
+{
+    // NOTE: Shapes keep a pointer to the texture (sf::Shape::setTexture takes a Texture*),
+    // so the textures must live as long as the shapes do.
+    // We'll try to load all theme variants; missing files are fine (we'll fallback to colors).
+
+    auto tryLoad = [](sf::Texture& tex, bool& flag, const fs::path& path)
+    {
+        flag = tex.loadFromFile(path);
+        if (flag)
+            tex.setSmooth(true);
+        else
+            std::cout << "[MainBoard] Stone texture missing or failed to load: " << path.string() << "\n";
+    };
+
+    // Default expected layout (relative to working directory)
+    //   assets/stones/
+    //     classic_black.png, classic_white.png
+    //     slate_shell_black.png, slate_shell_white.png
+    //     glass_black.png,  glass_white.png
+    tryLoad(m_stoneTexClassicBlack,     m_hasStoneTexClassicBlack,     fs::path("assets/stones/classic_black.png"));
+    tryLoad(m_stoneTexClassicWhite,     m_hasStoneTexClassicWhite,     fs::path("assets/stones/classic_white.png"));
+    tryLoad(m_stoneTexSlateShellBlack,  m_hasStoneTexSlateShellBlack,  fs::path("assets/stones/slate_shell_black.png"));
+    tryLoad(m_stoneTexSlateShellWhite,  m_hasStoneTexSlateShellWhite,  fs::path("assets/stones/slate_shell_white.png"));
+    tryLoad(m_stoneTexGlassBlack,       m_hasStoneTexGlassBlack,       fs::path("assets/stones/glass_black.png"));
+    tryLoad(m_stoneTexGlassWhite,       m_hasStoneTexGlassWhite,       fs::path("assets/stones/glass_white.png"));
+}
+
+const sf::Texture* MainBoard::getStoneTexture(StoneTheme theme, PieceColor c) const
+{
+    const bool wantBlack = (c == BLACK);
+
+    switch (theme)
+    {
+        case StoneTheme::SlateShell:
+            if (wantBlack) return m_hasStoneTexSlateShellBlack ? &m_stoneTexSlateShellBlack : nullptr;
+            return m_hasStoneTexSlateShellWhite ? &m_stoneTexSlateShellWhite : nullptr;
+
+        case StoneTheme::Glass:
+            if (wantBlack) return m_hasStoneTexGlassBlack ? &m_stoneTexGlassBlack : nullptr;
+            return m_hasStoneTexGlassWhite ? &m_stoneTexGlassWhite : nullptr;
+
+        case StoneTheme::Classic:
+        default:
+            if (wantBlack) return m_hasStoneTexClassicBlack ? &m_stoneTexClassicBlack : nullptr;
+            return m_hasStoneTexClassicWhite ? &m_stoneTexClassicWhite : nullptr;
+    }
+}
+
+void MainBoard::applyStoneVisual(sf::CircleShape& stone, PieceColor c) const
+{
+    // Fallback to classic if context is missing.
+    const StoneTheme theme = m_context ? m_context->m_stoneTheme : StoneTheme::Classic;
+
+    // If textures exist for this theme/color, prefer them.
+    if (const sf::Texture* tex = getStoneTexture(theme, c))
+    {
+        // SFML shapes modulate the texture with fill color; keep it white to show texture unmodified.
+        stone.setFillColor(sf::Color::White);
+        stone.setTexture(tex, true);
+
+        // Keep light outlines so stones still read clearly on both boards.
+        switch (theme)
+        {
+            case StoneTheme::SlateShell:
+                stone.setOutlineThickness(2.f);
+                stone.setOutlineColor(sf::Color(120, 120, 120, 220));
+                break;
+            case StoneTheme::Glass:
+                stone.setOutlineThickness(2.5f);
+                stone.setOutlineColor(sf::Color(220, 220, 255, 160));
+                break;
+            case StoneTheme::Classic:
+            default:
+                stone.setOutlineThickness(1.5f);
+                stone.setOutlineColor(sf::Color(30, 30, 30, 180));
+                break;
+        }
+        return;
+    }
+
+    // No texture available => disable texturing and use the original color-based styling.
+    stone.setTexture(nullptr, true);
+
+    switch (theme)
+    {
+        case StoneTheme::SlateShell:
+        {
+            if (c == BLACK)
+            {
+                stone.setFillColor(sf::Color(28, 28, 28));
+                stone.setOutlineThickness(2.f);
+                stone.setOutlineColor(sf::Color(130, 130, 130));
+            }
+            else
+            {
+                stone.setFillColor(sf::Color(245, 241, 234));
+                stone.setOutlineThickness(2.f);
+                stone.setOutlineColor(sf::Color(130, 130, 130));
+            }
+        } break;
+
+        case StoneTheme::Glass:
+        {
+            if (c == BLACK)
+            {
+                stone.setFillColor(sf::Color(8, 10, 18));
+                stone.setOutlineThickness(3.f);
+                stone.setOutlineColor(sf::Color(230, 230, 255, 180));
+            }
+            else
+            {
+                stone.setFillColor(sf::Color(252, 252, 255));
+                stone.setOutlineThickness(2.5f);
+                stone.setOutlineColor(sf::Color(60, 60, 80, 200));
+            }
+        } break;
+
+        case StoneTheme::Classic:
+        default:
+        {
+            if (c == BLACK)
+            {
+                stone.setFillColor(sf::Color::Black);
+                stone.setOutlineThickness(1.f);
+                stone.setOutlineColor(sf::Color(220, 220, 220));
+            }
+            else
+            {
+                stone.setFillColor(sf::Color::White);
+                stone.setOutlineThickness(1.f);
+                stone.setOutlineColor(sf::Color::Black);
+            }
+        } break;
+    }
 }
 
 bool MainBoard::isAIMode() const { return m_context && (m_context->m_gameMode == GameMode::AiVsPlayer); }
@@ -271,15 +415,7 @@ void MainBoard::rebuildStonesFromGame()
             sf::CircleShape stone(radius);
             stone.setOrigin({radius, radius});
             stone.setPosition({m_boardTopLeft.x + x * m_cellSize, m_boardTopLeft.y + y * m_cellSize});
-            if (c == BLACK) {
-                stone.setFillColor(sf::Color::Black);
-                stone.setOutlineThickness(1.f);
-                stone.setOutlineColor(sf::Color(220, 220, 220));
-            } else {
-                stone.setFillColor(sf::Color::White);
-                stone.setOutlineThickness(1.f);
-                stone.setOutlineColor(sf::Color::Black);
-            }
+            applyStoneVisual(stone, c);
             m_stones.push_back(stone);
         }
     }
@@ -316,6 +452,13 @@ void MainBoard::handleLeftClick(const sf::Vector2i &pixelPos)
 
 void MainBoard::Update(sf::Time)
 {
+    // If the user changed stone theme in Settings, update visuals immediately.
+    if (m_context && m_context->m_stoneTheme != m_lastStoneTheme)
+    {
+        m_lastStoneTheme = m_context->m_stoneTheme;
+        rebuildStonesFromGame();
+    }
+
     if (m_context->m_requestBoardRestart) {
         m_context->m_requestBoardRestart = false;
         resetGame();
@@ -427,9 +570,7 @@ void MainBoard::Draw()
 
         sf::CircleShape turnStone(10.f);
         turnStone.setOrigin({10.f, 10.f});
-        turnStone.setFillColor(current == BLACK ? sf::Color::Black : sf::Color::White);
-        turnStone.setOutlineThickness(1.f);
-        turnStone.setOutlineColor(current == BLACK ? sf::Color(220,220,220) : sf::Color::Black);
+        applyStoneVisual(turnStone, current);
         turnStone.setPosition({160.f, 40.f});
         window.draw(turnStone);
     }

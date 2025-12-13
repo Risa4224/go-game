@@ -10,6 +10,7 @@
 #include "game.h"
 
 #include <SFML/Graphics/RectangleShape.hpp>
+#include <SFML/Graphics/Texture.hpp>
 #include <SFML/Graphics/Vertex.hpp>
 #include <SFML/Graphics/CircleShape.hpp>
 #include <SFML/Graphics/Text.hpp>
@@ -52,6 +53,24 @@ private:
     bool m_hasClassicTexture = false;
     bool m_hasDarkTexture = false;
 
+    // Stone theme caching (so we can refresh visuals when the user changes settings)
+    StoneTheme m_lastStoneTheme = StoneTheme::Classic;
+
+    // Stone textures (SFML 3: shapes store a pointer to the texture, so textures must outlive the shapes)
+    sf::Texture m_stoneTexClassicBlack;
+    sf::Texture m_stoneTexClassicWhite;
+    sf::Texture m_stoneTexSlateShellBlack;
+    sf::Texture m_stoneTexSlateShellWhite;
+    sf::Texture m_stoneTexGlassBlack;
+    sf::Texture m_stoneTexGlassWhite;
+
+    bool m_hasStoneTexClassicBlack = false;
+    bool m_hasStoneTexClassicWhite = false;
+    bool m_hasStoneTexSlateShellBlack = false;
+    bool m_hasStoneTexSlateShellWhite = false;
+    bool m_hasStoneTexGlassBlack = false;
+    bool m_hasStoneTexGlassWhite = false;
+
     // Notification Logic
     std::string m_notificationText;
     bool m_showNotification = false;
@@ -69,7 +88,10 @@ private:
 
     void setNotification(const std::string &msg);
     void buildGrid();
+    void loadStoneTexturesFromFiles();
+    const sf::Texture* getStoneTexture(StoneTheme theme, PieceColor c) const;
     void rebuildStonesFromGame();
+    void applyStoneVisual(sf::CircleShape& stone, PieceColor c) const;
     void handleLeftClick(const sf::Vector2i &pixelPos);
     void resetGame();
 

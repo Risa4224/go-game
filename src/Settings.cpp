@@ -20,11 +20,14 @@ SettingsState::SettingsState(std::shared_ptr<Context>& context)
       m_volumePercent(m_context->m_assets->GetFont(MAIN_FONT), "100%", 40),
       m_themeLabel(m_context->m_assets->GetFont(MAIN_FONT), "Theme:", 40),
       m_themeValue(m_context->m_assets->GetFont(MAIN_FONT), "Classic", 40),
+      m_stoneLabel(m_context->m_assets->GetFont(MAIN_FONT), "Stones:", 40),
+      m_stoneValue(m_context->m_assets->GetFont(MAIN_FONT), "Classic", 40),
       m_backText(m_context->m_assets->GetFont(MAIN_FONT), "Back", 36)
 {
     // Boxes
     m_volumeBox.setSize({420.f, kRowHeight});
     m_themeBox.setSize({420.f, kRowHeight});
+    m_stoneBox.setSize({420.f, kRowHeight});
     m_backBox.setSize({200.f, 60.f});
 
     // Slider visuals
@@ -44,6 +47,8 @@ SettingsState::SettingsState(std::shared_ptr<Context>& context)
     m_volumePercent.setFillColor(sf::Color::Black);
     m_themeLabel.setFillColor(sf::Color::Black);
     m_themeValue.setFillColor(sf::Color::Black);
+    m_stoneLabel.setFillColor(sf::Color::Black);
+    m_stoneValue.setFillColor(sf::Color::Black);
     m_backText.setFillColor(sf::Color::Black);
 
     // Title is usually on a dark background
@@ -133,6 +138,30 @@ void SettingsState::LayoutThemeRow()
     }
 }
 
+void SettingsState::LayoutStoneRow()
+{
+    const float padding = 18.f;
+
+    const auto boxB = m_stoneBox.getGlobalBounds();
+    const float left  = boxB.position.x;
+    const float right = boxB.position.x + boxB.size.x;
+    const float midY  = boxB.position.y + boxB.size.y * 0.5f;
+
+    // Label left
+    {
+        const auto b = m_stoneLabel.getLocalBounds();
+        m_stoneLabel.setOrigin({b.position.x, b.position.y + b.size.y * 0.5f});
+        m_stoneLabel.setPosition({left + padding, midY});
+    }
+
+    // Value right
+    {
+        const auto b = m_stoneValue.getLocalBounds();
+        m_stoneValue.setOrigin({b.position.x + b.size.x, b.position.y + b.size.y * 0.5f});
+        m_stoneValue.setPosition({right - padding, midY});
+    }
+}
+
 void SettingsState::RefreshThemeText()
 {
     if (m_context->m_boardTheme == BoardTheme::Classic)
@@ -142,6 +171,21 @@ void SettingsState::RefreshThemeText()
 
     // String width changes => re-layout to keep right-aligned
     LayoutThemeRow();
+}
+
+void SettingsState::RefreshStoneText()
+{
+    // Requires Context::m_stoneTheme + enum class StoneTheme in GameApp.h
+    switch (m_context->m_stoneTheme)
+    {
+        case StoneTheme::Classic:    m_stoneValue.setString("Classic"); break;
+        case StoneTheme::SlateShell: m_stoneValue.setString("Slate/Shell"); break;
+        case StoneTheme::Glass:      m_stoneValue.setString("Glass"); break;
+        default:                     m_stoneValue.setString("Classic"); break;
+    }
+
+    // String width changes => re-layout to keep right-aligned
+    LayoutStoneRow();
 }
 
 void SettingsState::ApplyVolume(float volumePercent)
@@ -217,11 +261,22 @@ void SettingsState::Init()
         RefreshThemeText();
     }
 
+    // Stone theme row
+    {
+        const auto b = m_stoneBox.getLocalBounds();
+        m_stoneBox.setOrigin(b.getCenter());
+        m_stoneBox.setPosition({cx, cy - 20.f + 2.f * kRowGap});
+        m_stoneBox.setFillColor(sf::Color(200, 200, 200));
+
+        LayoutStoneRow();
+        RefreshStoneText();
+    }
+
     // Back button
     {
         const auto b = m_backBox.getLocalBounds();
         m_backBox.setOrigin(b.getCenter());
-        m_backBox.setPosition({cx, cy - 20.f + 2.f * kRowGap});
+        m_backBox.setPosition({cx, cy - 20.f + 3.f * kRowGap});
         m_backBox.setFillColor(sf::Color(200, 200, 200));
 
         const auto tb = m_backText.getLocalBounds();
@@ -251,6 +306,7 @@ void SettingsState::ProcessInput()
 
             m_volumeBoxHovered = m_volumeBox.getGlobalBounds().contains(mousePos);
             m_themeHovered     = m_themeBox.getGlobalBounds().contains(mousePos);
+            m_stoneHovered     = m_stoneBox.getGlobalBounds().contains(mousePos);
             m_backHovered      = m_backBox.getGlobalBounds().contains(mousePos);
 
             // Slider hover: knob OR an expanded track hitbox (easier to grab)
@@ -299,6 +355,18 @@ void SettingsState::ProcessInput()
                     (m_context->m_boardTheme == BoardTheme::Classic) ? BoardTheme::Dark : BoardTheme::Classic;
                 RefreshThemeText();
             }
+            else if (m_stoneBox.getGlobalBounds().contains(mousePos))
+            {
+                // Cycle stone themes
+                switch (m_context->m_stoneTheme)
+                {
+                    case StoneTheme::Classic:    m_context->m_stoneTheme = StoneTheme::SlateShell; break;
+                    case StoneTheme::SlateShell: m_context->m_stoneTheme = StoneTheme::Glass; break;
+                    case StoneTheme::Glass:      m_context->m_stoneTheme = StoneTheme::Classic; break;
+                    default:                     m_context->m_stoneTheme = StoneTheme::Classic; break;
+                }
+                RefreshStoneText();
+            }
             else if (m_backBox.getGlobalBounds().contains(mousePos))
             {
                 m_context->m_states->PopCurrent();
@@ -316,6 +384,7 @@ void SettingsState::Update(sf::Time)
 {
     m_volumeBox.setFillColor(m_volumeBoxHovered ? sf::Color(230, 230, 230) : sf::Color(200, 200, 200));
     m_themeBox.setFillColor(m_themeHovered ? sf::Color(230, 230, 230) : sf::Color(200, 200, 200));
+    m_stoneBox.setFillColor(m_stoneHovered ? sf::Color(230, 230, 230) : sf::Color(200, 200, 200));
     m_backBox.setFillColor(m_backHovered ? sf::Color(230, 230, 230) : sf::Color(200, 200, 200));
 
     m_volumeKnob.setFillColor((m_volumeHovered || m_volumeDragging) ? sf::Color(255, 255, 255) : sf::Color(245, 245, 245));
@@ -337,6 +406,11 @@ void SettingsState::Draw()
     m_context->m_window->draw(m_themeBox);
     m_context->m_window->draw(m_themeLabel);
     m_context->m_window->draw(m_themeValue);
+
+    // Stone theme row
+    m_context->m_window->draw(m_stoneBox);
+    m_context->m_window->draw(m_stoneLabel);
+    m_context->m_window->draw(m_stoneValue);
 
     // Back
     m_context->m_window->draw(m_backBox);

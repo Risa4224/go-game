@@ -29,6 +29,12 @@ enum class BoardTheme
     Classic,
     Dark
 };
+enum class StoneTheme
+{
+    Classic,
+    SlateShell,
+    Glass
+};
 // Ngữ cảnh dùng chung cho mọi State
 struct Context
 {
@@ -41,6 +47,7 @@ struct Context
     GameMode  m_gameMode;
     bool m_requestBoardRestart = false;
     BoardTheme m_boardTheme = BoardTheme::Classic;
+    StoneTheme m_stoneTheme = StoneTheme::Classic;
     AIDifficulty m_aiDifficulty = AIDifficulty::MEDIUM;
     bool m_humanPlaysBlack{true};
     Context()
