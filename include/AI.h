@@ -21,11 +21,11 @@ struct AIMove {
 class GoAI {
 public:
     static AIMove computeAIMove(const Game& game, AIDifficulty difficulty);
-private:
+
+    // Internal helpers (used by HARD search implementation in AI.cpp)
     static double evaluateBoardHeuristic(const Game& game, PieceColor aiColor);
-
     static std::vector<AIMove> generateCandidateMoves(const Game& game);
-
+private:
     static double minimax(Game game,
                           int depth,
                           int maxDepth,
