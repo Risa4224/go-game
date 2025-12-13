@@ -18,21 +18,9 @@ struct AIMove {
     AIMove(int xx = -1, int yy = -1, bool pass = true)
         : x(xx), y(yy), isPass(pass) {}
 };
-
-
-struct AIMoveOutcome {
-    bool playedStone;  // true if AI placed a stone, false if AI passed
-    bool finished;     // true if the game ended after the AI action (e.g., 2nd consecutive pass)
-};
 class GoAI {
 public:
     static AIMove computeAIMove(const Game& game, AIDifficulty difficulty);
-
-    static bool playAIMove(Game& game, AIDifficulty difficulty);
-
-    // Same as playAIMove, but also reports whether the game finished after the AI action.
-    static AIMoveOutcome playAIMoveWithOutcome(Game& game, AIDifficulty difficulty);
-
 private:
     static double evaluateBoardHeuristic(const Game& game, PieceColor aiColor);
 
