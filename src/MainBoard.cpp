@@ -1,7 +1,7 @@
 #include "MainBoard.hpp"
 
+#include <SFML/Graphics/PrimitiveType.hpp>
 #include <SFML/Window/Event.hpp>
-#include <SFML/Graphics/PrimitiveType.hpp> 
 
 #include <algorithm>
 #include <filesystem>
@@ -17,6 +17,49 @@ namespace fs = std::filesystem;
 
 namespace
 {
+    // ---- Board visual tuning (match reference style) ----
+    constexpr float kGridMargin = 28.f;             // padding inside the board for coords
+    constexpr float kOuterBorderThickness = 2.f;    // bold outer border around grid
+    constexpr float kCoordFontSize = 16.f;
+
+    // Go coordinates skip "I"
+    std::string makeGoLetters(int n)
+    {
+        // Standard: A B C D E F G H J K L M N O P Q R S T ... (skip I)
+        const std::string alphabet = "ABCDEFGHJKLMNOPQRSTUVWXYZ";
+        if (n <= 0) return "";
+        if ((int)alphabet.size() >= n) return alphabet.substr(0, n);
+
+        // fallback for huge sizes
+        std::string out;
+        out.reserve(n);
+        for (int i = 0; i < n; ++i)
+        {
+            char c = (i < (int)alphabet.size()) ? alphabet[i] : char('A' + (i % 26));
+            if (c == 'I') c = 'J';
+            out.push_back(c);
+        }
+        return out;
+    }
+
+    // (A,19) style where y=0 is top row -> 19
+    std::string toGoCoord(int x, int y, int boardSize)
+    {
+        const std::string letters = makeGoLetters(boardSize);
+        char col = (x >= 0 && x < boardSize && x < (int)letters.size()) ? letters[x] : '?';
+        int row = boardSize - y;
+        return "(" + std::string(1, col) + "," + std::to_string(row) + ")";
+    }
+
+    // Hoshi points index sets
+    std::vector<int> hoshiIdx(int n)
+    {
+        if (n == 19) return {3, 9, 15};
+        if (n == 13) return {3, 6, 9};
+        if (n == 9)  return {2, 4, 6};
+        return {};
+    }
+
     enum class SaveLoadMode
     {
         Save,
@@ -31,7 +74,7 @@ namespace
         std::vector<std::string> files;
         int selected = -1;
 
-        int scroll = 0;              // in rows
+        int scroll = 0; // in rows
         int visibleRows = 10;
         float rowHeight = 28.f;
 
@@ -51,7 +94,9 @@ namespace
             }
 
             if (selected < 0) selected = 0;
-            if (selected >= static_cast<int>(files.size())) selected = static_cast<int>(files.size()) - 1;
+            if (selected >= static_cast<int>(files.size()))
+                selected = static_cast<int>(files.size()) - 1;
+
             scroll = std::clamp(scroll, 0, std::max(0, static_cast<int>(files.size()) - visibleRows));
         }
 
@@ -63,64 +108,96 @@ namespace
 
     SaveLoadMenuState g_saveLoad;
 
-    // Best-effort deletion
-// DEBUG VERSION: Best-effort deletion
-    bool tryDeleteSaveFile(const std::string& filename)
+    // Robust save dir finder: tries a few likely places, then creates ./saved_game if missing.
+    static fs::path findSaveDir()
     {
         std::error_code ec;
-        bool deleted = false;
-        
-        // Define the list of paths/extensions to try
-        // Adjust ".txt" or ".go" depending on what your Game::saveToFile uses!
-        std::vector<fs::path> pathsToTry;
-        
-        // 1. Try exact name in current folder
-        pathsToTry.push_back(fs::path(filename));
-        // 2. Try exact name in "saves" folder
-        pathsToTry.push_back(fs::path("saves") / filename);
-        
-        // 3. Try with .txt extension (if your game saves as .txt)
-        pathsToTry.push_back(fs::path(filename).replace_extension(".txt"));
-        pathsToTry.push_back((fs::path("saves") / filename).replace_extension(".txt"));
+        const fs::path cwd = fs::current_path(ec);
 
-        // 4. Try with .go extension
-        pathsToTry.push_back(fs::path(filename).replace_extension(".go"));
-        pathsToTry.push_back((fs::path("saves") / filename).replace_extension(".go"));
+        std::vector<fs::path> candidates = {
+            cwd / "saved_game",
+            cwd / "go-game" / "saved_game",
+            cwd.parent_path() / "saved_game",
+            cwd.parent_path() / "go-game" / "saved_game",
+        };
+
+        for (const auto& p : candidates)
+        {
+            if (fs::exists(p, ec) && fs::is_directory(p, ec))
+                return p;
+        }
+
+        // create the most reasonable default: ./saved_game
+        fs::path dir = cwd / "saved_game";
+        fs::create_directories(dir, ec);
+        std::cout << "[SaveDir] created: " << dir << " | err=" << ec.message() << "\n";
+        return dir;
+    }
+
+    // Best-effort deletion (looks in saved_game)
+    static bool tryDeleteSaveFile(const std::string& filename)
+    {
+        std::error_code ec;
+        const fs::path saveDir = findSaveDir();
+
+        fs::path in = fs::path(filename);
+        fs::path inName = in.filename(); // strip any folder user might have included
+
+        fs::path goName = inName;
+        if (!goName.has_extension())
+            goName.replace_extension(".go");
+
+        fs::path txtName = goName;
+        txtName.replace_extension(".txt");
+
+        std::vector<fs::path> toTry = {
+            saveDir / inName,
+            saveDir / goName,
+            saveDir / txtName,
+
+            // sometimes they are saved in CWD by mistake
+            inName,
+            goName,
+            txtName
+        };
+
+        std::sort(toTry.begin(), toTry.end());
+        toTry.erase(std::unique(toTry.begin(), toTry.end()), toTry.end());
 
         std::cout << "[Delete Debug] Request to delete: " << filename << "\n";
+        std::cout << "[Delete Debug] CWD: " << fs::current_path() << "\n";
+        std::cout << "[Delete Debug] SaveDir chosen: " << saveDir << "\n";
 
-        for (const auto& p : pathsToTry)
+        for (const auto& p : toTry)
         {
-            // Check if exists first to avoid confusing error logs for non-existent guesses
-            if (fs::exists(p, ec)) 
+            bool ex = fs::exists(p, ec);
+            std::cout << "  Try: " << p << " | exists=" << (ex ? "yes" : "no") << "\n";
+            if (ex)
             {
-                std::cout << "   Found file at: " << p << ". Deleting... ";
-                if (fs::remove(p, ec)) 
+                if (fs::remove(p, ec))
                 {
-                    std::cout << "SUCCESS.\n";
-                    deleted = true;
-                    // Keep going? Usually we stop, but maybe you have a .meta file too? 
-                    // Let's stop on first success for now.
-                    return true; 
+                    std::cout << "  -> DELETE OK: " << p << "\n";
+                    return true;
                 }
-                else
-                {
-                    std::cout << "FAILED. Error: " << ec.message() << "\n";
-                }
-            }
-            else
-            {
-                // Uncomment this if you are really stuck to see where it looked
-                // std::cout << "   Checked: " << p << " (Not found)\n";
+                std::cout << "  -> DELETE FAIL: " << p << " | err=" << ec.message() << "\n";
             }
         }
 
-        if (!deleted) {
-            std::cout << "[Delete Debug] Could not find or delete any matching file.\n";
-            std::cout << "               Current Working Directory is: " << fs::current_path() << "\n";
+        std::cout << "[Delete Debug] Could not delete. Listing files in: " << saveDir << "\n";
+        if (fs::exists(saveDir, ec) && fs::is_directory(saveDir, ec))
+        {
+            for (const auto& e : fs::directory_iterator(saveDir, ec))
+            {
+                if (!ec && e.is_regular_file())
+                    std::cout << "   - " << e.path().filename().string() << "\n";
+            }
+        }
+        else
+        {
+            std::cout << "[Delete Debug] SaveDir does not exist.\n";
         }
 
-        return deleted;
+        return false;
     }
 } // namespace
 
@@ -153,9 +230,8 @@ void MainBoard::Init()
                           static_cast<float>(winSize.y));
 
     // --- 1. Load Font & Setup Text ---
-    auto& font = m_context->m_assets->GetFont(MAIN_FONT);
+    auto &font = m_context->m_assets->GetFont(MAIN_FONT);
 
-    // Menu Overlay Texts
     m_menuTitleText.emplace(font, "Game Menu", 24);
     m_menuDeleteText.emplace(font, "Delete", 16);
     m_menuCancelText.emplace(font, "Cancel", 16);
@@ -168,40 +244,48 @@ void MainBoard::Init()
     m_boardBackground.setOutlineThickness(2.f);
     m_boardBackground.setOutlineColor(sf::Color::Black);
 
-    m_boardTopLeft.x = (winSizeF.x - m_boardPixelSize) * 0.5f;
+    // Reserve space for right side panel
+    constexpr float sidePanelW = 160.f;
+    constexpr float sidePanelMargin = 6.f;
+    constexpr float sidePanelGap = 18.f;
+
+    const float sidePanelX = winSizeF.x - sidePanelW - sidePanelMargin;
+    const float boardAreaW = sidePanelX - sidePanelGap;
+
+    m_boardTopLeft.x = std::max(20.f, (boardAreaW - m_boardPixelSize) * 0.5f);
     m_boardTopLeft.y = (winSizeF.y - m_boardPixelSize) * 0.5f;
     m_boardBackground.setPosition(m_boardTopLeft);
 
     m_hasClassicTexture = m_boardTextureClassic.loadFromFile("assets/texture/light-wood.jpg");
-    m_hasDarkTexture = m_boardTextureDark.loadFromFile("assets/texture/dark-stone.jpg");
+    m_hasDarkTexture    = m_boardTextureDark.loadFromFile("assets/texture/dark-stone.jpg");
 
-    m_cellSize = m_boardPixelSize / static_cast<float>(m_boardSize - 1);
+    // grid is inset so coordinates fit inside board
+    m_cellSize = (m_boardPixelSize - 2.f * kGridMargin) / static_cast<float>(m_boardSize - 1);
 
     buildGrid();
 
     // --- 3. UI Buttons Positioning ---
-    float btnX = winSizeF.x - 150.f;
-    
-    auto setupBtn = [&](sf::RectangleShape& box, float yPos) {
+    float btnX = sidePanelX + (sidePanelW - 100.f) * 0.5f;
+
+    auto setupBtn = [&](sf::RectangleShape &box, float yPos)
+    {
         box.setSize({100.f, 40.f});
-        box.setFillColor(sf::Color(200,200,200));
-        box.setPosition({btnX, yPos}); 
+        box.setFillColor(sf::Color(200, 200, 200));
+        box.setPosition({btnX, yPos});
     };
 
-    setupBtn(m_undoButtonBox,   40.f);
-    setupBtn(m_redoButtonBox,   90.f);
-    setupBtn(m_passButtonBox,  140.f);
+    setupBtn(m_undoButtonBox, 40.f);
+    setupBtn(m_redoButtonBox, 90.f);
+    setupBtn(m_passButtonBox, 140.f);
     setupBtn(m_pauseButtonBox, 190.f);
-    setupBtn(m_saveButtonBox,  240.f);
-    setupBtn(m_loadButtonBox,  290.f);
+    setupBtn(m_saveButtonBox, 240.f);
+    setupBtn(m_loadButtonBox, 290.f);
 
     if (!m_game)
         m_game = std::make_unique<Game>(new Board());
 
-    // Load stone textures once (optional: falls back to flat colors if files are missing).
     loadStoneTexturesFromFiles();
 
-    // Cache the current stone theme so we can refresh visuals if the user changes it in Settings.
     if (m_context)
         m_lastStoneTheme = m_context->m_stoneTheme;
 
@@ -213,11 +297,7 @@ void MainBoard::Init()
 
 void MainBoard::loadStoneTexturesFromFiles()
 {
-    // NOTE: Shapes keep a pointer to the texture (sf::Shape::setTexture takes a Texture*),
-    // so the textures must live as long as the shapes do.
-    // We'll try to load all theme variants; missing files are fine (we'll fallback to colors).
-
-    auto tryLoad = [](sf::Texture& tex, bool& flag, const fs::path& path)
+    auto tryLoad = [](sf::Texture &tex, bool &flag, const fs::path &path)
     {
         flag = tex.loadFromFile(path);
         if (flag)
@@ -226,125 +306,97 @@ void MainBoard::loadStoneTexturesFromFiles()
             std::cout << "[MainBoard] Stone texture missing or failed to load: " << path.string() << "\n";
     };
 
-    // Default expected layout (relative to working directory)
-    //   assets/stones/
-    //     classic_black.png, classic_white.png
-    //     slate_shell_black.png, slate_shell_white.png
-    //     glass_black.png,  glass_white.png
-    tryLoad(m_stoneTexClassicBlack,     m_hasStoneTexClassicBlack,     fs::path("assets/stones/classic_black.png"));
-    tryLoad(m_stoneTexClassicWhite,     m_hasStoneTexClassicWhite,     fs::path("assets/stones/classic_white.png"));
-    tryLoad(m_stoneTexSlateShellBlack,  m_hasStoneTexSlateShellBlack,  fs::path("assets/stones/slate_shell_black.png"));
-    tryLoad(m_stoneTexSlateShellWhite,  m_hasStoneTexSlateShellWhite,  fs::path("assets/stones/slate_shell_white.png"));
-    tryLoad(m_stoneTexGlassBlack,       m_hasStoneTexGlassBlack,       fs::path("assets/stones/glass_black.png"));
-    tryLoad(m_stoneTexGlassWhite,       m_hasStoneTexGlassWhite,       fs::path("assets/stones/glass_white.png"));
+    tryLoad(m_stoneTexClassicBlack,    m_hasStoneTexClassicBlack,    fs::path("assets/stones/classic_black.png"));
+    tryLoad(m_stoneTexClassicWhite,    m_hasStoneTexClassicWhite,    fs::path("assets/stones/classic_white.png"));
+    tryLoad(m_stoneTexSlateShellBlack, m_hasStoneTexSlateShellBlack, fs::path("assets/stones/slate_shell_black.png"));
+    tryLoad(m_stoneTexSlateShellWhite, m_hasStoneTexSlateShellWhite, fs::path("assets/stones/slate_shell_white.png"));
+    tryLoad(m_stoneTexGlassBlack,      m_hasStoneTexGlassBlack,      fs::path("assets/stones/glass_black.png"));
+    tryLoad(m_stoneTexGlassWhite,      m_hasStoneTexGlassWhite,      fs::path("assets/stones/glass_white.png"));
 }
 
-const sf::Texture* MainBoard::getStoneTexture(StoneTheme theme, PieceColor c) const
+const sf::Texture *MainBoard::getStoneTexture(StoneTheme theme, PieceColor c) const
 {
     const bool wantBlack = (c == BLACK);
 
     switch (theme)
     {
-        case StoneTheme::SlateShell:
-            if (wantBlack) return m_hasStoneTexSlateShellBlack ? &m_stoneTexSlateShellBlack : nullptr;
-            return m_hasStoneTexSlateShellWhite ? &m_stoneTexSlateShellWhite : nullptr;
+    case StoneTheme::SlateShell:
+        if (wantBlack) return m_hasStoneTexSlateShellBlack ? &m_stoneTexSlateShellBlack : nullptr;
+        return m_hasStoneTexSlateShellWhite ? &m_stoneTexSlateShellWhite : nullptr;
 
-        case StoneTheme::Glass:
-            if (wantBlack) return m_hasStoneTexGlassBlack ? &m_stoneTexGlassBlack : nullptr;
-            return m_hasStoneTexGlassWhite ? &m_stoneTexGlassWhite : nullptr;
+    case StoneTheme::Glass:
+        if (wantBlack) return m_hasStoneTexGlassBlack ? &m_stoneTexGlassBlack : nullptr;
+        return m_hasStoneTexGlassWhite ? &m_stoneTexGlassWhite : nullptr;
 
-        case StoneTheme::Classic:
-        default:
-            if (wantBlack) return m_hasStoneTexClassicBlack ? &m_stoneTexClassicBlack : nullptr;
-            return m_hasStoneTexClassicWhite ? &m_stoneTexClassicWhite : nullptr;
+    case StoneTheme::Classic:
+    default:
+        if (wantBlack) return m_hasStoneTexClassicBlack ? &m_stoneTexClassicBlack : nullptr;
+        return m_hasStoneTexClassicWhite ? &m_stoneTexClassicWhite : nullptr;
     }
 }
 
-void MainBoard::applyStoneVisual(sf::CircleShape& stone, PieceColor c) const
+void MainBoard::applyStoneVisual(sf::CircleShape &stone, PieceColor c) const
 {
-    // Fallback to classic if context is missing.
     const StoneTheme theme = m_context ? m_context->m_stoneTheme : StoneTheme::Classic;
 
-    // If textures exist for this theme/color, prefer them.
-    if (const sf::Texture* tex = getStoneTexture(theme, c))
+    if (const sf::Texture *tex = getStoneTexture(theme, c))
     {
-        // SFML shapes modulate the texture with fill color; keep it white to show texture unmodified.
         stone.setFillColor(sf::Color::White);
         stone.setTexture(tex, true);
-
-        // Keep light outlines so stones still read clearly on both boards.
-        switch (theme)
-        {
-            case StoneTheme::SlateShell:
-                stone.setOutlineThickness(2.f);
-                stone.setOutlineColor(sf::Color(120, 120, 120, 220));
-                break;
-            case StoneTheme::Glass:
-                stone.setOutlineThickness(2.5f);
-                stone.setOutlineColor(sf::Color(220, 220, 255, 160));
-                break;
-            case StoneTheme::Classic:
-            default:
-                stone.setOutlineThickness(1.5f);
-                stone.setOutlineColor(sf::Color(30, 30, 30, 180));
-                break;
-        }
+        stone.setOutlineThickness(0.f);
+        stone.setOutlineColor(sf::Color::Transparent);
         return;
     }
 
-    // No texture available => disable texturing and use the original color-based styling.
     stone.setTexture(nullptr, true);
 
     switch (theme)
     {
-        case StoneTheme::SlateShell:
+    case StoneTheme::SlateShell:
+        if (c == BLACK)
         {
-            if (c == BLACK)
-            {
-                stone.setFillColor(sf::Color(28, 28, 28));
-                stone.setOutlineThickness(2.f);
-                stone.setOutlineColor(sf::Color(130, 130, 130));
-            }
-            else
-            {
-                stone.setFillColor(sf::Color(245, 241, 234));
-                stone.setOutlineThickness(2.f);
-                stone.setOutlineColor(sf::Color(130, 130, 130));
-            }
-        } break;
+            stone.setFillColor(sf::Color(28, 28, 28));
+            stone.setOutlineThickness(2.f);
+            stone.setOutlineColor(sf::Color(130, 130, 130));
+        }
+        else
+        {
+            stone.setFillColor(sf::Color(245, 241, 234));
+            stone.setOutlineThickness(2.f);
+            stone.setOutlineColor(sf::Color(130, 130, 130));
+        }
+        break;
 
-        case StoneTheme::Glass:
+    case StoneTheme::Glass:
+        if (c == BLACK)
         {
-            if (c == BLACK)
-            {
-                stone.setFillColor(sf::Color(8, 10, 18));
-                stone.setOutlineThickness(3.f);
-                stone.setOutlineColor(sf::Color(230, 230, 255, 180));
-            }
-            else
-            {
-                stone.setFillColor(sf::Color(252, 252, 255));
-                stone.setOutlineThickness(2.5f);
-                stone.setOutlineColor(sf::Color(60, 60, 80, 200));
-            }
-        } break;
+            stone.setFillColor(sf::Color(8, 10, 18));
+            stone.setOutlineThickness(3.f);
+            stone.setOutlineColor(sf::Color(230, 230, 255, 180));
+        }
+        else
+        {
+            stone.setFillColor(sf::Color(252, 252, 255));
+            stone.setOutlineThickness(2.5f);
+            stone.setOutlineColor(sf::Color(60, 60, 80, 200));
+        }
+        break;
 
-        case StoneTheme::Classic:
-        default:
+    case StoneTheme::Classic:
+    default:
+        if (c == BLACK)
         {
-            if (c == BLACK)
-            {
-                stone.setFillColor(sf::Color::Black);
-                stone.setOutlineThickness(1.f);
-                stone.setOutlineColor(sf::Color(220, 220, 220));
-            }
-            else
-            {
-                stone.setFillColor(sf::Color::White);
-                stone.setOutlineThickness(1.f);
-                stone.setOutlineColor(sf::Color::Black);
-            }
-        } break;
+            stone.setFillColor(sf::Color::Black);
+            stone.setOutlineThickness(1.f);
+            stone.setOutlineColor(sf::Color(220, 220, 220));
+        }
+        else
+        {
+            stone.setFillColor(sf::Color::White);
+            stone.setOutlineThickness(1.f);
+            stone.setOutlineColor(sf::Color::Black);
+        }
+        break;
     }
 }
 
@@ -352,29 +404,48 @@ bool MainBoard::isAIMode() const { return m_context && (m_context->m_gameMode ==
 PieceColor MainBoard::humanColor() const { return (!m_context || m_context->m_humanPlaysBlack) ? BLACK : WHITE; }
 PieceColor MainBoard::aiColor() const { return (humanColor() == BLACK) ? WHITE : BLACK; }
 
-void MainBoard::handleGameOver() {
+void MainBoard::handleGameOver()
+{
     if (!m_game) return;
+
     auto [b, w] = m_game->calculateFinalScore();
     std::string msg = (b > w) ? "Black wins!" : (w > b) ? "White wins!" : "Draw!";
     msg += " B:" + std::to_string(b) + " W:" + std::to_string(w);
+
     setNotification(msg);
     m_winSound.play();
     m_context->m_states->Add(std::make_unique<PauseState>(m_context, PauseState::Mode::GameOver, msg), false);
 }
 
-void MainBoard::maybeRunAITurn() {
-    if (!isAIMode() || !m_game || m_game->getTurn() != aiColor()) return;
+void MainBoard::maybeRunAITurn()
+{
+    if (!isAIMode() || !m_game || m_game->getTurn() != aiColor())
+        return;
+
     AIMove mv = GoAI::computeAIMove(*m_game, m_context->m_aiDifficulty);
-    if (mv.isPass) {
-        if(m_game->pass()) handleGameOver();
-        else { setNotification("AI Passed"); rebuildStonesFromGame(); m_passSound.play(); }
+    if (mv.isPass)
+    {
+        if (m_game->pass())
+            handleGameOver();
+        else
+        {
+            setNotification("AI Passed");
+            rebuildStonesFromGame();
+            m_passSound.play();
+        }
         return;
     }
-    if (m_game->placeStone(mv.x, mv.y)) {
-        m_placeSound.play(); rebuildStonesFromGame();
-        setNotification("AI Played (" + std::to_string(mv.x) + "," + std::to_string(mv.y) + ")");
-    } else {
-        if(m_game->pass()) handleGameOver();
+
+    if (m_game->placeStone(mv.x, mv.y))
+    {
+        m_placeSound.play();
+        rebuildStonesFromGame();
+        setNotification("AI Played " + toGoCoord(mv.x, mv.y, m_boardSize));
+    }
+    else
+    {
+        if (m_game->pass())
+            handleGameOver();
     }
 }
 
@@ -388,33 +459,47 @@ void MainBoard::setNotification(const std::string &msg)
 void MainBoard::buildGrid()
 {
     m_gridLines.clear();
-    for (int i = 0; i < m_boardSize; ++i) {
-        float x = m_boardTopLeft.x + i * m_cellSize;
-        m_gridLines.push_back({{x, m_boardTopLeft.y}, sf::Color::Black});
-        m_gridLines.push_back({{x, m_boardTopLeft.y + m_boardPixelSize}, sf::Color::Black});
+
+    const sf::Vector2f gridStart = {m_boardTopLeft.x + kGridMargin, m_boardTopLeft.y + kGridMargin};
+    const float gridSpan = m_cellSize * static_cast<float>(m_boardSize - 1);
+
+    for (int i = 0; i < m_boardSize; ++i)
+    {
+        float x = gridStart.x + i * m_cellSize;
+        m_gridLines.push_back({{x, gridStart.y}, sf::Color::Black});
+        m_gridLines.push_back({{x, gridStart.y + gridSpan}, sf::Color::Black});
     }
-    for (int j = 0; j < m_boardSize; ++j) {
-        float y = m_boardTopLeft.y + j * m_cellSize;
-        m_gridLines.push_back({{m_boardTopLeft.x, y}, sf::Color::Black});
-        m_gridLines.push_back({{m_boardTopLeft.x + m_boardPixelSize, y}, sf::Color::Black});
+
+    for (int j = 0; j < m_boardSize; ++j)
+    {
+        float y = gridStart.y + j * m_cellSize;
+        m_gridLines.push_back({{gridStart.x, y}, sf::Color::Black});
+        m_gridLines.push_back({{gridStart.x + gridSpan, y}, sf::Color::Black});
     }
 }
 
 void MainBoard::rebuildStonesFromGame()
 {
     m_stones.clear();
-    if (!m_game || !m_game->getBoard()) return;
+    if (!m_game || !m_game->getBoard())
+        return;
+
     Board *board = m_game->getBoard();
     int size = board->getSize();
+
+    const sf::Vector2f gridStart = {m_boardTopLeft.x + kGridMargin, m_boardTopLeft.y + kGridMargin};
     float radius = m_cellSize * 0.4f;
 
-    for (int x = 0; x < size; ++x) {
-        for (int y = 0; y < size; ++y) {
+    for (int x = 0; x < size; ++x)
+    {
+        for (int y = 0; y < size; ++y)
+        {
             PieceColor c = board->getPiece(x, y);
             if (c == NONE) continue;
+
             sf::CircleShape stone(radius);
             stone.setOrigin({radius, radius});
-            stone.setPosition({m_boardTopLeft.x + x * m_cellSize, m_boardTopLeft.y + y * m_cellSize});
+            stone.setPosition({gridStart.x + x * m_cellSize, gridStart.y + y * m_cellSize});
             applyStoneVisual(stone, c);
             m_stones.push_back(stone);
         }
@@ -424,48 +509,69 @@ void MainBoard::rebuildStonesFromGame()
 void MainBoard::handleLeftClick(const sf::Vector2i &pixelPos)
 {
     sf::Vector2f posF((float)pixelPos.x, (float)pixelPos.y);
-    if (!m_boardBackground.getGlobalBounds().contains(posF)) return;
+    if (!m_boardBackground.getGlobalBounds().contains(posF))
+        return;
 
-    float localX = posF.x - m_boardTopLeft.x;
-    float localY = posF.y - m_boardTopLeft.y;
+    const sf::Vector2f gridStart = {m_boardTopLeft.x + kGridMargin, m_boardTopLeft.y + kGridMargin};
+
+    float localX = posF.x - gridStart.x;
+    float localY = posF.y - gridStart.y;
+
     int ix = (int)(localX / m_cellSize + 0.5f);
     int iy = (int)(localY / m_cellSize + 0.5f);
 
-    if (ix < 0 || ix >= m_boardSize || iy < 0 || iy >= m_boardSize || !m_game) return;
-    if (isAIMode() && m_game->getTurn() != humanColor()) { setNotification("Wait for AI"); return; }
+    if (ix < 0 || ix >= m_boardSize || iy < 0 || iy >= m_boardSize || !m_game)
+        return;
 
-    if (m_game->placeStone(ix, iy)) {
+    if (isAIMode() && m_game->getTurn() != humanColor())
+    {
+        setNotification("Wait for AI");
+        return;
+    }
+
+    if (m_game->placeStone(ix, iy))
+    {
         m_placeSound.play();
         rebuildStonesFromGame();
+
+        // IMPORTANT: always show Go coords here (fixes the "(1,1)" issue)
         std::string msg = (m_game->getTurn() == WHITE ? "Black" : "White");
-        msg += " (" + std::to_string(ix) + "," + std::to_string(iy) + ")";
-        if (m_game->lastMoveCreatedKoThreat()) msg += " (Ko)";
+        msg += " " + toGoCoord(ix, iy, m_boardSize);
+
+        if (m_game->lastMoveCreatedKoThreat())
+            msg += " (Ko)";
+
         setNotification(msg);
         maybeRunAITurn();
-    } else {
+    }
+    else
+    {
         m_invalidSound.play();
-        if(m_game->lastMoveWasKoViolation()) setNotification("Invalid: Ko Violation");
-        else if(m_game->lastMoveWasSuicide()) setNotification("Invalid: Suicide");
-        else setNotification("Invalid Move");
+        if (m_game->lastMoveWasKoViolation())
+            setNotification("Invalid: Ko Violation");
+        else if (m_game->lastMoveWasSuicide())
+            setNotification("Invalid: Suicide");
+        else
+            setNotification("Invalid Move");
     }
 }
 
 void MainBoard::Update(sf::Time)
 {
-    // If the user changed stone theme in Settings, update visuals immediately.
     if (m_context && m_context->m_stoneTheme != m_lastStoneTheme)
     {
         m_lastStoneTheme = m_context->m_stoneTheme;
         rebuildStonesFromGame();
     }
 
-    if (m_context->m_requestBoardRestart) {
+    if (m_context->m_requestBoardRestart)
+    {
         m_context->m_requestBoardRestart = false;
         resetGame();
     }
 
-    // Button Hover
-    auto updateColor = [&](sf::RectangleShape& box, bool hover) {
+    auto updateColor = [&](sf::RectangleShape &box, bool hover)
+    {
         box.setFillColor(hover ? sf::Color(230, 230, 230) : sf::Color(200, 200, 200));
     };
     updateColor(m_undoButtonBox, m_undoHovered);
@@ -475,9 +581,10 @@ void MainBoard::Update(sf::Time)
     updateColor(m_saveButtonBox, m_saveHovered);
     updateColor(m_loadButtonBox, m_loadHovered);
 
-    // Notification Timer
-    if (m_showNotification) {
-        if (m_notificationClock.getElapsedTime().asSeconds() > m_notificationDuration) {
+    if (m_showNotification)
+    {
+        if (m_notificationClock.getElapsedTime().asSeconds() > m_notificationDuration)
+        {
             m_showNotification = false;
             m_notificationText.clear();
         }
@@ -486,59 +593,193 @@ void MainBoard::Update(sf::Time)
 
 void MainBoard::Draw()
 {
-    sf::RenderWindow& window = *m_context->m_window;
+    sf::RenderWindow &window = *m_context->m_window;
     auto winSize = window.getSize();
 
-    // 1. Theme Logic
+    // Theme logic
     sf::Color gridColor = sf::Color::Black;
     sf::Color boardColor = sf::Color(210, 164, 80);
 
-    if (m_context->m_boardTheme == BoardTheme::Dark) {
+    if (m_context->m_boardTheme == BoardTheme::Dark)
+    {
         gridColor = sf::Color(200, 200, 200);
         boardColor = sf::Color(40, 40, 40);
-        if (m_hasDarkTexture) {
+
+        if (m_hasDarkTexture)
+        {
             m_boardBackground.setTexture(&m_boardTextureDark);
             m_boardBackground.setFillColor(sf::Color::White);
-        } else {
+        }
+        else
+        {
             m_boardBackground.setTexture(nullptr);
             m_boardBackground.setFillColor(boardColor);
         }
-    } else {
-        if (m_hasClassicTexture) {
+    }
+    else
+    {
+        if (m_hasClassicTexture)
+        {
             m_boardBackground.setTexture(&m_boardTextureClassic);
             m_boardBackground.setFillColor(sf::Color::White);
-        } else {
+        }
+        else
+        {
             m_boardBackground.setTexture(nullptr);
             m_boardBackground.setFillColor(boardColor);
         }
     }
 
-    for (auto& v : m_gridLines) v.color = gridColor;
+    for (auto &v : m_gridLines)
+        v.color = gridColor;
 
     window.draw(m_boardBackground);
-    if (!m_gridLines.empty()) {
-        window.draw(m_gridLines.data(), m_gridLines.size(), sf::PrimitiveType::Lines);
-    }
-    for (const auto& s : m_stones) window.draw(s);
 
-    // 2. Draw Side Panel
+    const sf::Vector2f gridStart = {m_boardTopLeft.x + kGridMargin, m_boardTopLeft.y + kGridMargin};
+    const float gridSpan = m_cellSize * static_cast<float>(m_boardSize - 1);
+
+    // Outer grid border (bold like reference)
+    sf::RectangleShape gridBorder({gridSpan, gridSpan});
+    gridBorder.setPosition(gridStart);
+    gridBorder.setFillColor(sf::Color::Transparent);
+    gridBorder.setOutlineThickness(kOuterBorderThickness);
+    gridBorder.setOutlineColor(gridColor);
+    window.draw(gridBorder);
+
+    // Grid lines
+    if (!m_gridLines.empty())
+        window.draw(m_gridLines.data(), m_gridLines.size(), sf::PrimitiveType::Lines);
+
+    // Hoshi points
+    {
+        auto pts = hoshiIdx(m_boardSize);
+        if (!pts.empty())
+        {
+            const float r = std::max(2.5f, m_cellSize * 0.08f);
+            sf::CircleShape dot(r);
+            dot.setOrigin({r, r});
+            dot.setFillColor(gridColor);
+
+            for (int ix : pts)
+            {
+                for (int iy : pts)
+                {
+                    dot.setPosition({gridStart.x + ix * m_cellSize, gridStart.y + iy * m_cellSize});
+                    window.draw(dot);
+                }
+            }
+        }
+    }
+
+    // Stone shadow only for Classic
+    const StoneTheme stoneTheme = m_context ? m_context->m_stoneTheme : StoneTheme::Classic;
+    const bool drawStoneShadow = (stoneTheme == StoneTheme::Classic);
+
+    if (drawStoneShadow)
+    {
+        for (const auto &s : m_stones)
+        {
+            sf::CircleShape shadow = s;
+            shadow.setTexture(nullptr, true);
+            shadow.setFillColor(sf::Color(0, 0, 0, 60));
+            shadow.setOutlineThickness(0.f);
+            shadow.move({2.f, 2.f});
+            window.draw(shadow);
+        }
+    }
+
+    for (const auto &s : m_stones)
+        window.draw(s);
+
+    // ---- Coordinates (Top+Bottom letters, Left+Right numbers) ----
+    const auto &font = m_context->m_assets->GetFont(MAIN_FONT);
+
+    const bool dark = (m_context->m_boardTheme == BoardTheme::Dark);
+    const sf::Color coordColor  = dark ? sf::Color(235, 235, 235) : sf::Color::Black;
+    const sf::Color coordShadow = dark ? sf::Color(0, 0, 0, 140)  : sf::Color(255, 255, 255, 140);
+
+    auto drawTextNice = [&](const std::string &str, sf::Vector2f pos, unsigned int size)
+    {
+        sf::Text t(font, str, size);
+        t.setFillColor(coordColor);
+
+        sf::Text sh = t;
+        sh.setFillColor(coordShadow);
+
+        auto b = t.getLocalBounds();
+        t.setOrigin({b.position.x + b.size.x * 0.5f, b.position.y + b.size.y * 0.5f});
+        sh.setOrigin(t.getOrigin());
+
+        sh.setPosition(pos + sf::Vector2f(1.f, 1.f));
+        t.setPosition(pos);
+
+        window.draw(sh);
+        window.draw(t);
+    };
+
+    const std::string letters = makeGoLetters(m_boardSize);
+
+    // top letters
+    {
+        const float y = m_boardTopLeft.y + kGridMargin * 0.45f;
+        for (int i = 0; i < m_boardSize; ++i)
+        {
+            const float x = gridStart.x + i * m_cellSize;
+            std::string s(1, (i < (int)letters.size() ? letters[i] : '?'));
+            drawTextNice(s, {x, y}, (unsigned)kCoordFontSize);
+        }
+    }
+
+    // bottom letters
+    {
+        const float y = m_boardTopLeft.y + m_boardPixelSize - kGridMargin * 0.45f;
+        for (int i = 0; i < m_boardSize; ++i)
+        {
+            const float x = gridStart.x + i * m_cellSize;
+            std::string s(1, (i < (int)letters.size() ? letters[i] : '?'));
+            drawTextNice(s, {x, y}, (unsigned)kCoordFontSize);
+        }
+    }
+
+    // left + right numbers (19 at top, 1 at bottom)
+    {
+        const float xL = m_boardTopLeft.x + kGridMargin * 0.45f;
+        const float xR = m_boardTopLeft.x + m_boardPixelSize - kGridMargin * 0.45f;
+
+        for (int j = 0; j < m_boardSize; ++j)
+        {
+            const float y = gridStart.y + j * m_cellSize;
+            const int label = (m_boardSize - j);
+            drawTextNice(std::to_string(label), {xL, y}, (unsigned)kCoordFontSize);
+            drawTextNice(std::to_string(label), {xR, y}, (unsigned)kCoordFontSize);
+        }
+    }
+
+    // ---- Side panel ----
+    constexpr float sidePanelW = 160.f;
+    constexpr float sidePanelMargin = 6.f;
+    const float sidePanelX = (float)winSize.x - sidePanelW - sidePanelMargin;
+
+    const float panelTop = 30.f;
+    const float panelH = 340.f;
+
     sf::RectangleShape sidePanel;
-    sidePanel.setSize({160.f, 340.f});
+    sidePanel.setSize({sidePanelW, panelH});
     sidePanel.setFillColor(sf::Color(40, 40, 40, 220));
-    sidePanel.setPosition({(float)winSize.x - 170.f, 30.f});
+    sidePanel.setPosition({sidePanelX, panelTop});
     sidePanel.setOutlineThickness(1.f);
     sidePanel.setOutlineColor(sf::Color(80, 80, 80));
     window.draw(sidePanel);
 
-    // 3. Draw Buttons & Text
-    const auto& font = m_context->m_assets->GetFont(MAIN_FONT);
-    auto drawBtn = [&](sf::RectangleShape& box, const std::string& str) {
+    // ---- Buttons ----
+    auto drawBtn = [&](sf::RectangleShape &box, const std::string &str)
+    {
         window.draw(box);
         sf::Text txt(font, str, 18);
         txt.setFillColor(sf::Color::Black);
         sf::FloatRect b = txt.getLocalBounds();
-        txt.setOrigin({b.position.x + b.size.x/2.f, b.position.y + b.size.y/2.f});
-        sf::Vector2f c = box.getPosition() + box.getSize()/2.f;
+        txt.setOrigin({b.position.x + b.size.x / 2.f, b.position.y + b.size.y / 2.f});
+        sf::Vector2f c = box.getPosition() + box.getSize() / 2.f;
         txt.setPosition(c);
         window.draw(txt);
     };
@@ -550,11 +791,12 @@ void MainBoard::Draw()
     drawBtn(m_saveButtonBox, "Save");
     drawBtn(m_loadButtonBox, "Load");
 
-    // 4. Draw Turn Panel
-    if (m_game) {
+    // ---- Turn Panel ----
+    if (m_game)
+    {
         PieceColor current = m_game->getTurn();
         std::string turnStr = (current == BLACK ? "Turn: Black" : (current == WHITE ? "Turn: White" : "Turn: -"));
-        
+
         sf::RectangleShape turnPanel({160.f, 40.f});
         turnPanel.setFillColor(sf::Color(30, 30, 30, 220));
         turnPanel.setOutlineThickness(1.f);
@@ -575,7 +817,7 @@ void MainBoard::Draw()
         window.draw(turnStone);
     }
 
-    // 5. Draw Bottom Hints
+    // ---- Bottom bar ----
     sf::RectangleShape bottomBar({(float)winSize.x, 30.f});
     bottomBar.setPosition({0.f, (float)winSize.y - 30.f});
     bottomBar.setFillColor(sf::Color(30, 30, 30, 230));
@@ -587,7 +829,7 @@ void MainBoard::Draw()
     hint.setPosition({10.f, (float)winSize.y - 30.f + 5.f});
     window.draw(hint);
 
-    // 6. Draw Notification Bar
+    // ---- Notification bar ----
     if (m_showNotification && !m_notificationText.empty())
     {
         sf::RectangleShape notifBar({(float)winSize.x, 24.f});
@@ -604,128 +846,154 @@ void MainBoard::Draw()
         window.draw(notifText);
     }
 
-    // 7. Draw Save/Load Overlay
+    // ---- Save/Load overlay ----
     if (g_saveLoad.open)
     {
         sf::RectangleShape dimmer({(float)winSize.x, (float)winSize.y});
-        dimmer.setFillColor(sf::Color(0,0,0,150));
+        dimmer.setFillColor(sf::Color(0, 0, 0, 150));
         window.draw(dimmer);
 
         sf::Vector2f pSize = g_saveLoad.panelSize;
-        sf::Vector2f pPos(((float)winSize.x - pSize.x)/2.f, ((float)winSize.y - pSize.y)/2.f);
+        sf::Vector2f pPos(((float)winSize.x - pSize.x) / 2.f, ((float)winSize.y - pSize.y) / 2.f);
         sf::RectangleShape panel(pSize);
         panel.setPosition(pPos);
-        panel.setFillColor(sf::Color(50,50,50));
+        panel.setFillColor(sf::Color(50, 50, 50));
         panel.setOutlineThickness(2.f);
         panel.setOutlineColor(sf::Color::White);
         window.draw(panel);
 
-        // Header
-        if(m_menuTitleText) {
+        if (m_menuTitleText)
+        {
             m_menuTitleText->setString(g_saveLoad.mode == SaveLoadMode::Save ? "Save Game" : "Load Game");
             sf::FloatRect b = m_menuTitleText->getLocalBounds();
-            m_menuTitleText->setOrigin({b.position.x + b.size.x/2.f, b.position.y + b.size.y/2.f});
-            m_menuTitleText->setPosition({pPos.x + pSize.x/2.f, pPos.y + 30.f});
+            m_menuTitleText->setOrigin({b.position.x + b.size.x / 2.f, b.position.y + b.size.y / 2.f});
+            m_menuTitleText->setPosition({pPos.x + pSize.x / 2.f, pPos.y + 30.f});
             m_menuTitleText->setFillColor(sf::Color::White);
             window.draw(*m_menuTitleText);
         }
 
-        // File List
         float listY = pPos.y + 70.f;
         float listW = pSize.x - 40.f;
         sf::RectangleShape listBg({listW, g_saveLoad.rowHeight * g_saveLoad.visibleRows});
-        listBg.setPosition({pPos.x+20.f, listY});
-        listBg.setFillColor(sf::Color(30,30,30));
+        listBg.setPosition({pPos.x + 20.f, listY});
+        listBg.setFillColor(sf::Color(30, 30, 30));
         window.draw(listBg);
 
-        if(m_fileListText) {
+        if (m_fileListText)
+        {
             m_fileListText->setFillColor(sf::Color::White);
-            for(int i=0; i<g_saveLoad.visibleRows; ++i) {
+            for (int i = 0; i < g_saveLoad.visibleRows; ++i)
+            {
                 int idx = g_saveLoad.scroll + i;
-                if(idx >= (int)g_saveLoad.files.size()) break;
-                
-                if(idx == g_saveLoad.selected) {
+                if (idx >= (int)g_saveLoad.files.size())
+                    break;
+
+                if (idx == g_saveLoad.selected)
+                {
                     sf::RectangleShape hl({listW, g_saveLoad.rowHeight});
-                    hl.setPosition({pPos.x+20.f, listY + i*g_saveLoad.rowHeight});
-                    hl.setFillColor(sf::Color(100,100,150));
+                    hl.setPosition({pPos.x + 20.f, listY + i * g_saveLoad.rowHeight});
+                    hl.setFillColor(sf::Color(100, 100, 150));
                     window.draw(hl);
                 }
 
                 m_fileListText->setString(g_saveLoad.files[idx]);
-                m_fileListText->setOrigin({0,0});
-                m_fileListText->setPosition({pPos.x+25.f, listY + i*g_saveLoad.rowHeight + 4.f});
+                m_fileListText->setOrigin({0, 0});
+                m_fileListText->setPosition({pPos.x + 25.f, listY + i * g_saveLoad.rowHeight + 4.f});
                 window.draw(*m_fileListText);
             }
         }
 
-        // --- HINT TEXT ---
-        sf::Text menuHint(font, "Hints: Click file to select | Double-click to Action | ESC to Close", 14);
+        sf::Text menuHint(font, "Hints: Click file to select | Enter = Action | Del = Delete | ESC to Close", 14);
         menuHint.setFillColor(sf::Color(200, 200, 200));
         menuHint.setPosition({pPos.x + 25.f, listY + g_saveLoad.rowHeight * g_saveLoad.visibleRows + 10.f});
         window.draw(menuHint);
 
-        // Buttons
         float btnY = pPos.y + pSize.y - 60.f;
-        auto drawMenuBtn = [&](float x, std::optional<sf::Text>& txt, std::string label, sf::Color bg) {
+        auto drawMenuBtn = [&](float x, std::optional<sf::Text> &txt, std::string label, sf::Color bg)
+        {
             sf::RectangleShape r({g_saveLoad.btnWidth, g_saveLoad.btnHeight});
             r.setPosition({x, btnY});
             r.setFillColor(bg);
             window.draw(r);
-            if (txt) {
+            if (txt)
+            {
                 txt->setString(label);
                 sf::FloatRect b = txt->getLocalBounds();
-                txt->setOrigin({b.position.x + b.size.x/2.f, b.position.y + b.size.y/2.f});
-                txt->setPosition({x + g_saveLoad.btnWidth/2.f, btnY + g_saveLoad.btnHeight/2.f});
+                txt->setOrigin({b.position.x + b.size.x / 2.f, b.position.y + b.size.y / 2.f});
+                txt->setPosition({x + g_saveLoad.btnWidth / 2.f, btnY + g_saveLoad.btnHeight / 2.f});
                 txt->setFillColor(sf::Color::Black);
                 window.draw(*txt);
             }
         };
 
         drawMenuBtn(pPos.x + 20.f, m_menuDeleteText, "Delete", sf::Color(150, 50, 50));
-        drawMenuBtn(pPos.x + (pSize.x - g_saveLoad.btnWidth)*0.5f, m_menuCancelText, "Cancel", sf::Color(100, 100, 100));
-        
-        std::string act = (g_saveLoad.mode == SaveLoadMode::Save && g_saveLoad.selected >= 0) ? "Overwrite" : 
-                          (g_saveLoad.mode == SaveLoadMode::Save ? "Save New" : "Load");
+        drawMenuBtn(pPos.x + (pSize.x - g_saveLoad.btnWidth) * 0.5f, m_menuCancelText, "Cancel", sf::Color(100, 100, 100));
+
+        std::string act =
+            (g_saveLoad.mode == SaveLoadMode::Save && g_saveLoad.selected >= 0) ? "Overwrite"
+            : (g_saveLoad.mode == SaveLoadMode::Save ? "Save New" : "Load");
+
         drawMenuBtn(pPos.x + pSize.x - g_saveLoad.btnWidth - 20.f, m_menuActionText, act, sf::Color(50, 150, 50));
     }
 }
 
 void MainBoard::ProcessInput()
 {
-    auto openMenu = [&](SaveLoadMode m) {
-        g_saveLoad.open = true; g_saveLoad.mode = m; g_saveLoad.refresh(); g_saveLoad.clampScroll();
+    auto openMenu = [&](SaveLoadMode m)
+    {
+        g_saveLoad.open = true;
+        g_saveLoad.mode = m;
+        g_saveLoad.refresh();
+        g_saveLoad.clampScroll();
     };
 
-    // Helper Actions
-    auto doDelete = [&]() {
-        if(g_saveLoad.selected < 0 || g_saveLoad.selected >= (int)g_saveLoad.files.size()) {
+    auto doDelete = [&]()
+    {
+        if (g_saveLoad.selected < 0 || g_saveLoad.selected >= (int)g_saveLoad.files.size())
+        {
             setNotification("No file selected.");
             return;
         }
+
         std::string fname = g_saveLoad.files[g_saveLoad.selected];
-        if (tryDeleteSaveFile(fname)) {
+        if (tryDeleteSaveFile(fname))
             setNotification("Deleted: " + fname);
-        } else {
+        else
             setNotification("Failed to delete " + fname);
-        }
+
         g_saveLoad.refresh();
     };
 
-    auto doAction = [&]() {
-        if (g_saveLoad.mode == SaveLoadMode::Load) {
-            if (g_saveLoad.selected >= 0 && g_saveLoad.selected < (int)g_saveLoad.files.size()) {
-                if(m_game->loadNamed(g_saveLoad.files[g_saveLoad.selected])) {
-                    rebuildStonesFromGame(); setNotification("Loaded: " + g_saveLoad.files[g_saveLoad.selected]);
+    auto doAction = [&]()
+    {
+        if (g_saveLoad.mode == SaveLoadMode::Load)
+        {
+            if (g_saveLoad.selected >= 0 && g_saveLoad.selected < (int)g_saveLoad.files.size())
+            {
+                if (m_game->loadNamed(g_saveLoad.files[g_saveLoad.selected]))
+                {
+                    rebuildStonesFromGame();
+                    setNotification("Loaded: " + g_saveLoad.files[g_saveLoad.selected]);
                     g_saveLoad.open = false;
                 }
-            } else { setNotification("No file selected to load."); }
-        } else { // Save
-            if (g_saveLoad.selected >= 0 && g_saveLoad.selected < (int)g_saveLoad.files.size()) {
+            }
+            else
+            {
+                setNotification("No file selected to load.");
+            }
+        }
+        else
+        {
+            if (g_saveLoad.selected >= 0 && g_saveLoad.selected < (int)g_saveLoad.files.size())
+            {
                 m_game->saveNamed(g_saveLoad.files[g_saveLoad.selected]);
                 setNotification("Overwritten: " + g_saveLoad.files[g_saveLoad.selected]);
                 g_saveLoad.open = false;
-            } else {
-                std::string n; m_game->saveToNewSlot(n);
+            }
+            else
+            {
+                std::string n;
+                m_game->saveToNewSlot(n);
                 setNotification("Saved New: " + n);
                 g_saveLoad.open = false;
             }
@@ -734,86 +1002,120 @@ void MainBoard::ProcessInput()
 
     while (const std::optional event = m_context->m_window->pollEvent())
     {
-        if (event->is<sf::Event::Closed>()) { m_context->m_window->close(); return; }
-
-        // --- MENU INPUT (Overlay) ---
-        if (g_saveLoad.open) 
+        if (event->is<sf::Event::Closed>())
         {
-            if (const auto* key = event->getIf<sf::Event::KeyPressed>()) {
-                if (key->scancode == sf::Keyboard::Scancode::Escape) g_saveLoad.open = false;
-                else if (key->scancode == sf::Keyboard::Scancode::Up) {
+            m_context->m_window->close();
+            return;
+        }
+
+        // --- MENU INPUT ---
+        if (g_saveLoad.open)
+        {
+            if (const auto *key = event->getIf<sf::Event::KeyPressed>())
+            {
+                if (key->scancode == sf::Keyboard::Scancode::Escape)
+                    g_saveLoad.open = false;
+                else if (key->scancode == sf::Keyboard::Scancode::Up)
+                {
                     g_saveLoad.selected = std::max(0, g_saveLoad.selected - 1);
-                    if(g_saveLoad.selected < g_saveLoad.scroll) g_saveLoad.scroll = g_saveLoad.selected;
+                    if (g_saveLoad.selected < g_saveLoad.scroll)
+                        g_saveLoad.scroll = g_saveLoad.selected;
                 }
-                else if (key->scancode == sf::Keyboard::Scancode::Down && !g_saveLoad.files.empty()) {
-                    g_saveLoad.selected = std::min((int)g_saveLoad.files.size()-1, g_saveLoad.selected + 1);
-                    if(g_saveLoad.selected >= g_saveLoad.scroll + g_saveLoad.visibleRows) g_saveLoad.scroll++;
+                else if (key->scancode == sf::Keyboard::Scancode::Down && !g_saveLoad.files.empty())
+                {
+                    g_saveLoad.selected = std::min((int)g_saveLoad.files.size() - 1, g_saveLoad.selected + 1);
+                    if (g_saveLoad.selected >= g_saveLoad.scroll + g_saveLoad.visibleRows)
+                        g_saveLoad.scroll++;
                 }
-                else if (key->scancode == sf::Keyboard::Scancode::Delete) doDelete();
-                else if (key->scancode == sf::Keyboard::Scancode::Enter) doAction();
+                else if (key->scancode == sf::Keyboard::Scancode::Delete)
+                    doDelete();
+                else if (key->scancode == sf::Keyboard::Scancode::Enter)
+                    doAction();
             }
-            // Mouse Wheel for List
-            else if (const auto* wheel = event->getIf<sf::Event::MouseWheelScrolled>()) {
-                if (!g_saveLoad.files.empty()) {
+            else if (const auto *wheel = event->getIf<sf::Event::MouseWheelScrolled>())
+            {
+                if (!g_saveLoad.files.empty())
+                {
                     g_saveLoad.scroll -= (int)wheel->delta;
                     g_saveLoad.clampScroll();
                 }
             }
-            // Mouse Click Hit Testing
-            else if (const auto* mb = event->getIf<sf::Event::MouseButtonPressed>()) {
-                if (mb->button == sf::Mouse::Button::Left) {
+            else if (const auto *mb = event->getIf<sf::Event::MouseButtonPressed>())
+            {
+                if (mb->button == sf::Mouse::Button::Left)
+                {
                     sf::Vector2f mPos((float)mb->position.x, (float)mb->position.y);
                     auto winSize = m_context->m_window->getSize();
                     sf::Vector2f pSize = g_saveLoad.panelSize;
-                    sf::Vector2f pPos(((float)winSize.x - pSize.x)/2.f, ((float)winSize.y - pSize.y)/2.f);
+                    sf::Vector2f pPos(((float)winSize.x - pSize.x) / 2.f, ((float)winSize.y - pSize.y) / 2.f);
 
-                    // Check if clicked outside panel
                     sf::FloatRect panelRect({pPos.x, pPos.y}, {pSize.x, pSize.y});
-                    if (!panelRect.contains(mPos)) {
+                    if (!panelRect.contains(mPos))
+                    {
                         g_saveLoad.open = false;
                         continue;
                     }
 
-                    // Check List Click
                     float listY = pPos.y + 70.f;
                     float listH = g_saveLoad.rowHeight * g_saveLoad.visibleRows;
                     sf::FloatRect listRect({pPos.x + 20.f, listY}, {pSize.x - 40.f, listH});
-                    
-                    if (listRect.contains(mPos)) {
+
+                    if (listRect.contains(mPos))
+                    {
                         int clickedRow = (int)((mPos.y - listY) / g_saveLoad.rowHeight);
                         int idx = g_saveLoad.scroll + clickedRow;
-                        if (idx >= 0 && idx < (int)g_saveLoad.files.size()) {
+                        if (idx >= 0 && idx < (int)g_saveLoad.files.size())
                             g_saveLoad.selected = idx;
-                        } else {
-                            // clicked empty space in list
+                        else
                             g_saveLoad.selected = -1;
-                        }
                     }
 
-                    // Check Buttons
                     float btnY = pPos.y + pSize.y - 60.f;
                     sf::FloatRect delRect({pPos.x + 20.f, btnY}, {g_saveLoad.btnWidth, g_saveLoad.btnHeight});
-                    sf::FloatRect canRect({pPos.x + (pSize.x - g_saveLoad.btnWidth)*0.5f, btnY}, {g_saveLoad.btnWidth, g_saveLoad.btnHeight});
+                    sf::FloatRect canRect({pPos.x + (pSize.x - g_saveLoad.btnWidth) * 0.5f, btnY}, {g_saveLoad.btnWidth, g_saveLoad.btnHeight});
                     sf::FloatRect actRect({pPos.x + pSize.x - g_saveLoad.btnWidth - 20.f, btnY}, {g_saveLoad.btnWidth, g_saveLoad.btnHeight});
 
-                    if (delRect.contains(mPos)) doDelete();
-                    else if (canRect.contains(mPos)) g_saveLoad.open = false;
-                    else if (actRect.contains(mPos)) doAction();
+                    if (delRect.contains(mPos))
+                        doDelete();
+                    else if (canRect.contains(mPos))
+                        g_saveLoad.open = false;
+                    else if (actRect.contains(mPos))
+                        doAction();
                 }
             }
-            continue; // Swallow input
+
+            continue;
         }
 
-        // --- GAME INPUT (Normal) ---
-        if (const auto* key = event->getIf<sf::Event::KeyPressed>()) {
-            if (key->scancode == sf::Keyboard::Scancode::Escape) { m_context->m_states->PopCurrent(); return; }
-            if (key->scancode == sf::Keyboard::Scancode::Z) { if(m_game->undo()) rebuildStonesFromGame(); }
-            if (key->scancode == sf::Keyboard::Scancode::Y) { if(m_game->redo()) rebuildStonesFromGame(); }
-            if (key->scancode == sf::Keyboard::Scancode::P) { 
-                m_passSound.play(); if(m_game->pass()) handleGameOver(); else maybeRunAITurn(); 
+        // --- GAME INPUT ---
+        if (const auto *key = event->getIf<sf::Event::KeyPressed>())
+        {
+            if (key->scancode == sf::Keyboard::Scancode::Escape)
+            {
+                m_context->m_states->PopCurrent();
+                return;
+            }
+            if (key->scancode == sf::Keyboard::Scancode::Z)
+            {
+                if (m_game->undo())
+                    rebuildStonesFromGame();
+            }
+            if (key->scancode == sf::Keyboard::Scancode::Y)
+            {
+                if (m_game->redo())
+                    rebuildStonesFromGame();
+            }
+            if (key->scancode == sf::Keyboard::Scancode::P)
+            {
+                m_passSound.play();
+                if (m_game->pass())
+                    handleGameOver();
+                else
+                    maybeRunAITurn();
             }
         }
-        else if (const auto* mm = event->getIf<sf::Event::MouseMoved>()) {
+        else if (const auto *mm = event->getIf<sf::Event::MouseMoved>())
+        {
             sf::Vector2f mp((float)mm->position.x, (float)mm->position.y);
             m_undoHovered = m_undoButtonBox.getGlobalBounds().contains(mp);
             m_redoHovered = m_redoButtonBox.getGlobalBounds().contains(mp);
@@ -822,20 +1124,46 @@ void MainBoard::ProcessInput()
             m_saveHovered = m_saveButtonBox.getGlobalBounds().contains(mp);
             m_loadHovered = m_loadButtonBox.getGlobalBounds().contains(mp);
         }
-        else if (const auto* mb = event->getIf<sf::Event::MouseButtonPressed>()) {
-            if (mb->button == sf::Mouse::Button::Left) {
+        else if (const auto *mb = event->getIf<sf::Event::MouseButtonPressed>())
+        {
+            if (mb->button == sf::Mouse::Button::Left)
+            {
                 sf::Vector2f mp((float)mb->position.x, (float)mb->position.y);
-                if (m_undoButtonBox.getGlobalBounds().contains(mp)) { if(m_game->undo()) rebuildStonesFromGame(); }
-                else if (m_redoButtonBox.getGlobalBounds().contains(mp)) { if(m_game->redo()) rebuildStonesFromGame(); }
-                else if (m_passButtonBox.getGlobalBounds().contains(mp)) { 
-                    m_passSound.play(); if(m_game->pass()) handleGameOver(); else maybeRunAITurn(); 
+
+                if (m_undoButtonBox.getGlobalBounds().contains(mp))
+                {
+                    if (m_game->undo())
+                        rebuildStonesFromGame();
                 }
-                else if (m_pauseButtonBox.getGlobalBounds().contains(mp)) m_context->m_states->Add(std::make_unique<PauseState>(m_context, PauseState::Mode::Paused), false);
-                
-                else if (m_saveButtonBox.getGlobalBounds().contains(mp)) openMenu(SaveLoadMode::Save);
-                else if (m_loadButtonBox.getGlobalBounds().contains(mp)) openMenu(SaveLoadMode::Load);
-                
-                else handleLeftClick({mb->position.x, mb->position.y});
+                else if (m_redoButtonBox.getGlobalBounds().contains(mp))
+                {
+                    if (m_game->redo())
+                        rebuildStonesFromGame();
+                }
+                else if (m_passButtonBox.getGlobalBounds().contains(mp))
+                {
+                    m_passSound.play();
+                    if (m_game->pass())
+                        handleGameOver();
+                    else
+                        maybeRunAITurn();
+                }
+                else if (m_pauseButtonBox.getGlobalBounds().contains(mp))
+                {
+                    m_context->m_states->Add(std::make_unique<PauseState>(m_context, PauseState::Mode::Paused), false);
+                }
+                else if (m_saveButtonBox.getGlobalBounds().contains(mp))
+                {
+                    openMenu(SaveLoadMode::Save);
+                }
+                else if (m_loadButtonBox.getGlobalBounds().contains(mp))
+                {
+                    openMenu(SaveLoadMode::Load);
+                }
+                else
+                {
+                    handleLeftClick({mb->position.x, mb->position.y});
+                }
             }
         }
     }
