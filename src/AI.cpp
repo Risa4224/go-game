@@ -1308,6 +1308,84 @@ if (blackSt > 0 && whiteSt > 0) {
     };
 
 
+    // ------------------------------------------------------------
+    // "Don't be stupid" filters (cheap anti-blunder heuristics)
+    //  1) Avoid filling our own (simple) true eye unless it's a capture / urgent save.
+    //  2) Penalize obvious self-atari (new group ends with 1 liberty) unless it's a direct save.
+    //
+    // Notes:
+    //  - We keep these checks lightweight so Medium(1s)/Hard(3s) can still search deep.
+    //  - We do NOT attempt full life&death; just filter the most common blunders.
+    // ------------------------------------------------------------
+
+    auto isSimpleTrueEye = [&](int x, int y) -> bool {
+        // Conservative "true-eye" test:
+        //   - All 4 orth neighbors are our stones or off-board
+        //   - No opponent stones on diagonals (avoids false-eye cases)
+        static const int dxD[4] = { -1, 1, -1, 1 };
+        static const int dyD[4] = { -1, -1, 1, 1 };
+
+        for (int d = 0; d < 4; ++d) {
+            const int nx = x + dx4[d];
+            const int ny = y + dy4[d];
+            if (!kinBounds(nx, ny)) continue; // edge counts as our "wall"
+            if (game.getPiece(nx, ny) != aiColor) return false;
+        }
+
+        for (int d = 0; d < 4; ++d) {
+            const int nx = x + dxD[d];
+            const int ny = y + dyD[d];
+            if (!kinBounds(nx, ny)) continue; // off-board diagonal is fine
+            if (game.getPiece(nx, ny) == oppColor) return false;
+        }
+        return true;
+    };
+
+    auto virtualGroupLibertiesAfterPlace = [&](int sx, int sy) -> int {
+        // Count liberties of the connected component if we place aiColor at (sx, sy),
+        // without copying Game (treat (sx, sy) as occupied by aiColor).
+        const int vTok = g_tmpVisited.nextToken();
+        const int lTok = g_seenLib.nextToken();
+
+        std::queue<std::pair<int, int>> q;
+        q.push({ sx, sy });
+        g_tmpVisited.setMarked(idx(sx, sy), vTok);
+
+        int liberties = 0;
+
+        while (!q.empty()) {
+            auto [x, y] = q.front();
+            q.pop();
+
+            for (int dir = 0; dir < 4; ++dir) {
+                const int nx = x + dx4[dir];
+                const int ny = y + dy4[dir];
+                if (!kinBounds(nx, ny)) continue;
+
+                // (sx, sy) is the virtual stone -> never count it as a liberty.
+                if (nx == sx && ny == sy) continue;
+
+                const PieceColor p = game.getPiece(nx, ny);
+                if (p == NONE) {
+                    const int lid = idx(nx, ny);
+                    if (!g_seenLib.isMarked(lid, lTok)) {
+                        g_seenLib.setMarked(lid, lTok);
+                        liberties++;
+                    }
+                } else if (p == aiColor) {
+                    const int nid = idx(nx, ny);
+                    if (!g_tmpVisited.isMarked(nid, vTok)) {
+                        g_tmpVisited.setMarked(nid, vTok);
+                        q.push({ nx, ny });
+                    }
+                }
+            }
+        }
+
+        return liberties;
+    };
+
+    
     scored.reserve(candCount);
 
     for (int y = 0; y < kBoardSize; ++y) {
@@ -1352,6 +1430,10 @@ if (blackSt > 0 && whiteSt > 0) {
     }
 }
 
+            int adjEmpty = 0;
+            bool wouldCapture = false;
+            bool directSave = false;
+
             for (int dir = 0; dir < 4; ++dir) {
                 int nx = x + dx4[dir];
                 int ny = y + dy4[dir];
@@ -1359,17 +1441,46 @@ if (blackSt > 0 && whiteSt > 0) {
 
                 PieceColor p = game.getPiece(nx, ny);
                 if (p == NONE) {
+                    adjEmpty++;
                     score += 1;
                 } else if (p == oppColor) {
                     // nếu group địch đang ở atari và (x,y) kề nó => có khả năng là liberty cuối => bắt
                     auto [libs, stones] = groupStatsCached(nx, ny);
-                    if (libs == 1) score += 30 + 3 * stones;
+                    if (libs == 1) {
+                        wouldCapture = true;
+                        score += 30 + 3 * stones;
+                    }
                 } else if (p == aiColor) {
                     // cứu group mình ở atari
                     auto [libs, stones] = groupStatsCached(nx, ny);
-                    if (libs == 1) score += 18 + 2 * stones;
+                    if (libs == 1) {
+                        directSave = true;
+                        score += 18 + 2 * stones;
+                    }
                     // nối group
                     score += 3;
+                }
+            }
+
+            // --- "Don't be stupid" filters ---
+            // 1) Avoid filling our own true eye (most common blunder).
+            // 2) Penalize obvious self-atari (new group ends with 1 liberty) unless it's a direct save.
+            if (!wouldCapture) {
+                if (isSimpleTrueEye(x, y)) {
+                    score -= directSave ? 40 : 120;
+                }
+
+                // Only run the heavier self-atari check on risky points.
+                if (adjEmpty <= 1) {
+                    const int vLib = virtualGroupLibertiesAfterPlace(x, y);
+
+                    // vLib == 0 => suicide (unless capture, which is excluded here).
+                    if (vLib == 0) continue;
+
+                    if (vLib == 1) {
+                        // Keep it in the list (throw-ins exist), but rank it very low.
+                        score -= directSave ? 20 : 70;
+                    }
                 }
             }
 
@@ -1479,6 +1590,9 @@ double GoAI::minimaxAlphaBetaQ(Game game,
 AIMove GoAI::computeAIMove(const Game& game, AIDifficulty difficulty)
 {
     const PieceColor aiColor = game.getTurn();
+    const PieceColor oppColor = game.oppositeColor(aiColor);
+    const int baseBlackCaptures = game.getBlackCaptures();
+    const int baseWhiteCaptures = game.getWhiteCaptures();
 
     std::vector<AIMove> candidates;
 
@@ -1522,6 +1636,65 @@ AIMove GoAI::computeAIMove(const Game& game, AIDifficulty difficulty)
         return AIMove(-1, -1, true);
     }
 
+
+    // ------------------------------------------------------------
+    // Root anti-blunder post-filter
+    // Urgent moves bypass generateCandidateMoves() scoring filters, so we
+    // re-check a few cheap patterns at the root to avoid wasting beam slots
+    // on obvious self-atari / filling true eyes.
+    // ------------------------------------------------------------
+    auto rootDidCapture = [&](const Game& after) -> bool {
+        if (aiColor == BLACK) return after.getBlackCaptures() > baseBlackCaptures;
+        return after.getWhiteCaptures() > baseWhiteCaptures;
+    };
+
+    auto rootIsSimpleTrueEye = [&](int x, int y) -> bool {
+        // Conservative "true-eye" test:
+        //   - All 4 orth neighbors are our stones or off-board
+        //   - No opponent stones on diagonals (avoids common false-eye cases)
+        static const int dx4_[4] = { -1, 1, 0, 0 };
+        static const int dy4_[4] = { 0, 0, -1, 1 };
+        static const int dxD[4]  = { -1, 1, -1, 1 };
+        static const int dyD[4]  = { -1, -1, 1, 1 };
+
+        for (int d = 0; d < 4; ++d) {
+            const int nx = x + dx4_[d];
+            const int ny = y + dy4_[d];
+            if (!kinBounds(nx, ny)) continue; // edge counts as our "wall"
+            if (game.getPiece(nx, ny) != aiColor) return false;
+        }
+        for (int d = 0; d < 4; ++d) {
+            const int nx = x + dxD[d];
+            const int ny = y + dyD[d];
+            if (!kinBounds(nx, ny)) continue;
+            if (game.getPiece(nx, ny) == oppColor) return false;
+        }
+        return true;
+    };
+
+    auto rootGroupLiberties = [&](const Game& g, int sx, int sy) -> int {
+        if (!kinBounds(sx, sy)) return 0;
+        if (g.getPiece(sx, sy) == NONE) return 0;
+
+        g_seenStone.ensureSize(kBoardSize * kBoardSize);
+        const int visitedTok = g_seenStone.nextToken();
+        GroupInfo gi = analyzeGroupFrom(g, sx, sy, visitedTok);
+        return gi.liberties;
+    };
+
+    auto rootIsDirectSave = [&](int x, int y) -> bool {
+        // If this point is a liberty of any adjacent atari group (ours), it's a direct save.
+        static const int dx4_[4] = { -1, 1, 0, 0 };
+        static const int dy4_[4] = { 0, 0, -1, 1 };
+        for (int d = 0; d < 4; ++d) {
+            const int nx = x + dx4_[d];
+            const int ny = y + dy4_[d];
+            if (!kinBounds(nx, ny)) continue;
+            if (game.getPiece(nx, ny) != aiColor) continue;
+            if (rootGroupLiberties(game, nx, ny) == 1) return true;
+        }
+        return false;
+    };
 
 
 // Time budget per move (no UI dependency).
@@ -1568,17 +1741,80 @@ else g_budget.remaining = 200000000;
         const int ROOT_LIMIT = (maxDepth >= 4 ? 28 : 40);
 
         // Build a legal root move list (beam-limited).
-        std::vector<AIMove> rootMoves;
-        rootMoves.reserve(ROOT_LIMIT);
+        // Root-level anti-blunder demotion so urgent moves don't bypass the
+        // generateCandidateMoves() "don't be stupid" filters.
+        std::vector<AIMove> rootMovesGood;
+        std::vector<AIMove> rootMovesBad;
+        rootMovesGood.reserve(ROOT_LIMIT);
+        rootMovesBad.reserve(ROOT_LIMIT);
 
         for (const AIMove& m : candidates) {
             Game test = game;
             if (!test.placeStone(m.x, m.y)) continue;
-            rootMoves.push_back(AIMove(m.x, m.y, false));
-            if ((int)rootMoves.size() >= ROOT_LIMIT) break;
+
+            bool demote = false;
+            const bool didCapture = rootDidCapture(test);
+
+            if (!didCapture) {
+                // Cheap adjacency features on the pre-move board.
+                int adjEmpty = 0;
+                bool hasOwnAdj = false;
+                static const int dx4_[4] = { -1, 1, 0, 0 };
+                static const int dy4_[4] = { 0, 0, -1, 1 };
+                for (int d = 0; d < 4; ++d) {
+                    const int nx = m.x + dx4_[d];
+                    const int ny = m.y + dy4_[d];
+                    if (!kinBounds(nx, ny)) continue;
+                    const PieceColor p = game.getPiece(nx, ny);
+                    if (p == NONE) adjEmpty++;
+                    else if (p == aiColor) hasOwnAdj = true;
+                }
+
+                bool directSave = false;
+
+                // 1) Filling a true eye is almost always bad unless saving an atari group.
+                if (rootIsSimpleTrueEye(m.x, m.y)) {
+                    directSave = hasOwnAdj ? rootIsDirectSave(m.x, m.y) : false;
+                    if (!directSave) demote = true;
+                }
+
+                // 2) Obvious self-atari (new group ends in atari) is usually bad unless direct save.
+                if (!demote && adjEmpty <= 1) {
+                    const int libsNew = rootGroupLiberties(test, m.x, m.y);
+                    if (libsNew == 1) {
+                        if (!directSave) directSave = hasOwnAdj ? rootIsDirectSave(m.x, m.y) : false;
+                        if (!directSave) demote = true;
+                    }
+                }
+            }
+
+            const AIMove pushed(m.x, m.y, false);
+            if (!demote) {
+                if ((int)rootMovesGood.size() < ROOT_LIMIT) {
+                    // If we already have demoted moves filling the beam, replace one.
+                    if ((int)(rootMovesGood.size() + rootMovesBad.size()) >= ROOT_LIMIT && !rootMovesBad.empty()) {
+                        rootMovesBad.pop_back();
+                    }
+                    rootMovesGood.push_back(pushed);
+                }
+            } else {
+                if ((int)(rootMovesGood.size() + rootMovesBad.size()) < ROOT_LIMIT) {
+                    rootMovesBad.push_back(pushed);
+                }
+            }
+
+            if ((int)rootMovesGood.size() >= ROOT_LIMIT) break;
         }
 
-        if (rootMoves.empty()) return AIMove(-1, -1, true);
+        std::vector<AIMove> rootMoves;
+        rootMoves.reserve(ROOT_LIMIT);
+        for (const auto& m : rootMovesGood) rootMoves.push_back(m);
+        for (const auto& m : rootMovesBad) {
+            if ((int)rootMoves.size() >= ROOT_LIMIT) break;
+            rootMoves.push_back(m);
+        }
+
+if (rootMoves.empty()) return AIMove(-1, -1, true);
 
         struct RootChoice { AIMove move; double score; };
 
@@ -1688,7 +1924,7 @@ else g_budget.remaining = 200000000;
 
         // Late-game pass decision (kept from your previous logic).
         const int emptyNow = countEmpty(game);
-        const bool lateGame = (emptyNow <= 60) || (rootMoves.size() <= 10);
+        const bool lateGame = (emptyNow <= 60);
 
         if (lateGame) {
             const double passBias = (emptyNow <= 40) ? 0.0 : -1.5;
@@ -1711,8 +1947,12 @@ orderingNewSearch();
 const int ROOT_LIMIT = 70;
 
 // Build a legal root move list (beam-limited).
-std::vector<AIMove> rootMoves;
-rootMoves.reserve(ROOT_LIMIT);
+// Root-level anti-blunder demotion so urgent moves don't bypass the
+// generateCandidateMoves() "don't be stupid" filters.
+std::vector<AIMove> rootMovesGood;
+std::vector<AIMove> rootMovesBad;
+rootMovesGood.reserve(ROOT_LIMIT);
+rootMovesBad.reserve(ROOT_LIMIT);
 
 for (const AIMove& m : candidates) {
     if (g_abortSearch || searchTimeUpNow()) break;
@@ -1720,8 +1960,66 @@ for (const AIMove& m : candidates) {
     Game test = game;
     if (!test.placeStone(m.x, m.y)) continue;
 
-    rootMoves.push_back(AIMove(m.x, m.y, false));
+    bool demote = false;
+    const bool didCapture = rootDidCapture(test);
+
+    if (!didCapture) {
+        // Cheap adjacency features on the pre-move board.
+        int adjEmpty = 0;
+        bool hasOwnAdj = false;
+        static const int dx4_[4] = { -1, 1, 0, 0 };
+        static const int dy4_[4] = { 0, 0, -1, 1 };
+        for (int d = 0; d < 4; ++d) {
+            const int nx = m.x + dx4_[d];
+            const int ny = m.y + dy4_[d];
+            if (!kinBounds(nx, ny)) continue;
+            const PieceColor p = game.getPiece(nx, ny);
+            if (p == NONE) adjEmpty++;
+            else if (p == aiColor) hasOwnAdj = true;
+        }
+
+        bool directSave = false;
+
+        // 1) Filling a true eye is almost always bad unless saving an atari group.
+        if (rootIsSimpleTrueEye(m.x, m.y)) {
+            directSave = hasOwnAdj ? rootIsDirectSave(m.x, m.y) : false;
+            if (!directSave) demote = true;
+        }
+
+        // 2) Obvious self-atari (new group ends in atari) is usually bad unless direct save.
+        if (!demote && adjEmpty <= 1) {
+            const int libsNew = rootGroupLiberties(test, m.x, m.y);
+            if (libsNew == 1) {
+                if (!directSave) directSave = hasOwnAdj ? rootIsDirectSave(m.x, m.y) : false;
+                if (!directSave) demote = true;
+            }
+        }
+    }
+
+    const AIMove pushed(m.x, m.y, false);
+    if (!demote) {
+        if ((int)rootMovesGood.size() < ROOT_LIMIT) {
+            // If we already have demoted moves filling the beam, replace one.
+            if ((int)(rootMovesGood.size() + rootMovesBad.size()) >= ROOT_LIMIT && !rootMovesBad.empty()) {
+                rootMovesBad.pop_back();
+            }
+            rootMovesGood.push_back(pushed);
+        }
+    } else {
+        if ((int)(rootMovesGood.size() + rootMovesBad.size()) < ROOT_LIMIT) {
+            rootMovesBad.push_back(pushed);
+        }
+    }
+
+    if ((int)rootMovesGood.size() >= ROOT_LIMIT) break;
+}
+
+std::vector<AIMove> rootMoves;
+rootMoves.reserve(ROOT_LIMIT);
+for (const auto& m : rootMovesGood) rootMoves.push_back(m);
+for (const auto& m : rootMovesBad) {
     if ((int)rootMoves.size() >= ROOT_LIMIT) break;
+    rootMoves.push_back(m);
 }
 
 if (rootMoves.empty()) return AIMove(-1, -1, true);
@@ -1836,7 +2134,7 @@ for (int d = 1; d <= maxDepth; ++d) {
 
 // Late-game pass decision (kept from your previous logic).
 const int emptyNow = countEmpty(game);
-const bool lateGame = (emptyNow <= 60) || (rootMoves.size() <= 10);
+const bool lateGame = (emptyNow <= 60);
 
 if (lateGame && std::isfinite(bestScore)) {
     const double passBias = (emptyNow <= 40) ? 0.0 : -1.5;
