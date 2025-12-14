@@ -26,17 +26,23 @@ namespace
     constexpr float kCoordFontSize = 16.f;
 
     // ---- Right-side panel + history layout constants ----
-    constexpr float kSidePanelW = 160.f;
-    constexpr float kSidePanelMargin = 6.f;
+    // Wider panel so buttons + move list feel less cramped.
+    constexpr float kSidePanelW = 210.f;
+    constexpr float kSidePanelMargin = 8.f;
     constexpr float kSidePanelGap = 18.f;
 
-    constexpr float kPanelTop = 30.f;
+    constexpr float kPanelTop = 24.f;
     // Increased to fit two extra buttons: "Show Moves" + "Hint".
-    constexpr float kSidePanelH = 490.f; // MUST match Draw() side panel height
+    constexpr float kSidePanelH = 540.f; // MUST match Draw() side panel height
+
+    // Button layout inside right panel
+    constexpr float kSidePanelPad = 12.f;
+    constexpr float kBtnH = 38.f;
+    constexpr float kBtnGap = 10.f;
 
     constexpr float kBottomBarH = 30.f;
     constexpr float kHistoryMargin = 10.f;
-    constexpr float kHistoryMinH = 120.f;
+    constexpr float kHistoryMinH = 140.f;
 
     // Go coordinates skip "I"
     std::string makeGoLetters(int n)
@@ -172,6 +178,10 @@ namespace
     static sf::Clock g_hintClock;
     static constexpr float kHintShowSeconds = 8.f;
 
+    // Hint spam cooldown (also reduces chance of noticeable stutter)
+    static sf::Clock g_hintCooldown;
+    static constexpr float kHintCooldownSeconds = 0.5f;
+
     // helper: whenever board state changes, refresh markers and clear hint
     static void invalidateMoveVisuals()
     {
@@ -207,11 +217,13 @@ namespace
     {
         const float sidePanelX = (float)winSize.x - kSidePanelW - kSidePanelMargin;
 
-        float x = sidePanelX;
-        float y = kPanelTop + kSidePanelH + kHistoryMargin;
+        const float x = sidePanelX;
+        const float y = kPanelTop + kSidePanelH + kHistoryMargin;
 
-        float w = kSidePanelW;
-        float h = 200.f;
+        const float w = kSidePanelW;
+        // Use remaining vertical space under the toolbar (so it scales with window size).
+        const float bottom = (float)winSize.y - kBottomBarH - 10.f;
+        float h = bottom - y-20.f;
         h = std::max(kHistoryMinH, h);
 
         return sf::FloatRect({x, y}, {w, h});
@@ -433,28 +445,34 @@ void MainBoard::Init()
     buildGrid();
 
     // --- 3. UI Buttons Positioning ---
-    float btnX = sidePanelX + (kSidePanelW - 100.f) * 0.5f;
+    // Right toolbar layout: full-width buttons, consistent spacing.
+    float y = kPanelTop + 58.f; // leave space for a small "Controls" header in Draw()
+    const float btnW = kSidePanelW - 2.f * kSidePanelPad;
+    const float btnX = sidePanelX + kSidePanelPad;
 
-    auto setupBtn = [&](sf::RectangleShape &box, float yPos)
+    auto setupBtn = [&](sf::RectangleShape& box)
     {
-        box.setSize({100.f, 40.f});
+        box.setSize({btnW, kBtnH});
+        box.setPosition({btnX, y});
         box.setFillColor(sf::Color(200, 200, 200));
-        box.setPosition({btnX, yPos});
+        box.setOutlineThickness(1.f);
+        box.setOutlineColor(sf::Color(120, 120, 120));
+        y += kBtnH + kBtnGap;
     };
 
-    setupBtn(m_undoButtonBox, 40.f);
-    setupBtn(m_redoButtonBox, 90.f);
-    setupBtn(m_passButtonBox, 140.f);
-    setupBtn(m_pauseButtonBox, 190.f);
-    setupBtn(m_saveButtonBox, 240.f);
-    setupBtn(m_loadButtonBox, 290.f);
+    setupBtn(m_undoButtonBox);
+    setupBtn(m_redoButtonBox);
+    setupBtn(m_passButtonBox);
+    setupBtn(m_pauseButtonBox);
+    setupBtn(m_saveButtonBox);
+    setupBtn(m_loadButtonBox);
 
     // End Game button on toolbar
-    setupBtn(g_endGameButtonBox, 340.f);
+    setupBtn(g_endGameButtonBox);
 
     // Show legal moves + Hint
-    setupBtn(g_showMovesButtonBox, 390.f);
-    setupBtn(g_hintButtonBox, 440.f);
+    setupBtn(g_showMovesButtonBox);
+    setupBtn(g_hintButtonBox);
 
     if (!m_game)
         m_game = std::make_unique<Game>(new Board());
@@ -878,20 +896,37 @@ void MainBoard::Update(sf::Time)
         resetGame();
     }
 
-    auto updateColor = [&](sf::RectangleShape &box, bool hover)
+    // Buttons
+    auto setButtonColor = [&](sf::RectangleShape& box, bool hover,
+                              sf::Color base = sf::Color(200, 200, 200),
+                              sf::Color hov  = sf::Color(230, 230, 230))
     {
-        box.setFillColor(hover ? sf::Color(230, 230, 230) : sf::Color(200, 200, 200));
+        box.setFillColor(hover ? hov : base);
     };
-    updateColor(m_undoButtonBox, m_undoHovered);
-    updateColor(m_redoButtonBox, m_redoHovered);
-    updateColor(m_passButtonBox, m_passHovered);
-    updateColor(m_pauseButtonBox, m_pauseHovered);
-    updateColor(m_saveButtonBox, m_saveHovered);
-    updateColor(m_loadButtonBox, m_loadHovered);
 
-    updateColor(g_endGameButtonBox, g_endGameHovered);
-    updateColor(g_showMovesButtonBox, g_showMovesHovered);
-    updateColor(g_hintButtonBox, g_hintHovered);
+    auto setDangerButtonColor = [&](sf::RectangleShape& box, bool hover)
+    {
+        setButtonColor(box, hover, sf::Color(210, 110, 110), sf::Color(235, 135, 135));
+    };
+
+    auto setToggleButtonColor = [&](sf::RectangleShape& box, bool hover, bool active)
+    {
+        if (active)
+            setButtonColor(box, hover, sf::Color(175, 220, 195), sf::Color(195, 240, 215));
+        else
+            setButtonColor(box, hover);
+    };
+
+    setButtonColor(m_undoButtonBox, m_undoHovered);
+    setButtonColor(m_redoButtonBox, m_redoHovered);
+    setButtonColor(m_passButtonBox, m_passHovered);
+    setButtonColor(m_pauseButtonBox, m_pauseHovered);
+    setButtonColor(m_saveButtonBox, m_saveHovered);
+    setButtonColor(m_loadButtonBox, m_loadHovered);
+
+    setDangerButtonColor(g_endGameButtonBox, g_endGameHovered);
+    setToggleButtonColor(g_showMovesButtonBox, g_showMovesHovered, g_showLegalMoves);
+    setButtonColor(g_hintButtonBox, g_hintHovered);
 
     if (m_showNotification)
     {
@@ -1123,30 +1158,53 @@ void MainBoard::Draw()
             drawTextNice(std::to_string(label), {xR, y}, (unsigned)kCoordFontSize);
         }
     }
-
     // ---- Side panel ----
     const float sidePanelX = (float)winSize.x - kSidePanelW - kSidePanelMargin;
 
+    // subtle shadow
+    sf::RectangleShape sideShadow({kSidePanelW, kSidePanelH});
+    sideShadow.setPosition({sidePanelX + 3.f, kPanelTop + 3.f});
+    sideShadow.setFillColor(sf::Color(0, 0, 0, 90));
+    window.draw(sideShadow);
+
     sf::RectangleShape sidePanel;
     sidePanel.setSize({kSidePanelW, kSidePanelH});
-    sidePanel.setFillColor(sf::Color(40, 40, 40, 220));
+    sidePanel.setFillColor(sf::Color(35, 35, 35, 235));
     sidePanel.setPosition({sidePanelX, kPanelTop});
     sidePanel.setOutlineThickness(1.f);
-    sidePanel.setOutlineColor(sf::Color(80, 80, 80));
+    sidePanel.setOutlineColor(sf::Color(95, 95, 95));
     window.draw(sidePanel);
+
+    // header
+    {
+        sf::Text panelTitle(font, "Controls", 18);
+        panelTitle.setFillColor(sf::Color(235, 235, 235));
+        panelTitle.setStyle(sf::Text::Bold);
+        panelTitle.setPosition({sidePanelX + kSidePanelPad, kPanelTop + 12.f});
+        window.draw(panelTitle);
+    }
+
 
     // ---- Buttons ----
     auto drawBtn = [&](sf::RectangleShape &box, const std::string &str)
     {
         window.draw(box);
+
+        const sf::Color bg = box.getFillColor();
+        const int lum = (int(bg.r) + int(bg.g) + int(bg.b)) / 3;
+        const sf::Color fg = (lum < 140) ? sf::Color::White : sf::Color::Black;
+
         sf::Text txt(font, str, 18);
-        txt.setFillColor(sf::Color::Black);
+        txt.setFillColor(fg);
+        txt.setStyle(sf::Text::Bold);
+
         sf::FloatRect b = txt.getLocalBounds();
         txt.setOrigin({b.position.x + b.size.x / 2.f, b.position.y + b.size.y / 2.f});
         sf::Vector2f c = box.getPosition() + box.getSize() / 2.f;
         txt.setPosition(c);
         window.draw(txt);
     };
+
 
     drawBtn(m_undoButtonBox, "Undo");
     drawBtn(m_redoButtonBox, "Redo");
@@ -1169,19 +1227,23 @@ void MainBoard::Draw()
         turnPanel.setFillColor(sf::Color(30, 30, 30, 220));
         turnPanel.setOutlineThickness(1.f);
         turnPanel.setOutlineColor(sf::Color(80, 80, 80));
-        turnPanel.setPosition({20.f, 20.f});
+
+        // Anchor near the board (looks more intentional than hard-coded screen coords)
+        const float tpX = m_boardTopLeft.x;
+        const float tpY = std::max(12.f, m_boardTopLeft.y - 52.f);
+        turnPanel.setPosition({tpX, tpY});
         window.draw(turnPanel);
 
         sf::Text turnText(font, turnStr, 18);
         turnText.setFillColor(sf::Color::White);
         turnText.setStyle(sf::Text::Bold);
-        turnText.setPosition({35.f, 25.f});
+        turnText.setPosition({tpX + 14.f, tpY + 9.f});
         window.draw(turnText);
 
         sf::CircleShape turnStone(10.f);
         turnStone.setOrigin({10.f, 10.f});
         applyStoneVisual(turnStone, current);
-        turnStone.setPosition({160.f, 40.f});
+        turnStone.setPosition({tpX + 142.f, tpY + 20.f});
         window.draw(turnStone);
     }
 
@@ -1596,26 +1658,37 @@ void MainBoard::ProcessInput()
                 g_legalMovesDirty = true;
                 setNotification(g_showLegalMoves ? "Legal moves: ON" : "Legal moves: OFF");
             }
-
             if (key->scancode == sf::Keyboard::Scancode::H)
             {
+                // Simple anti-spam cooldown (0.5s)
+                if (g_hintCooldown.getElapsedTime().asSeconds() < kHintCooldownSeconds)
+                {
+                    // ignore fast repeats
+                    continue;
+                }
+                g_hintCooldown.restart();
+
                 if (aiBusy())
                 {
                     setNotification("Hint: AI is thinking...");
                 }
-                else
-                if (isAIMode() && m_game->getTurn() != humanColor())
+                else if (isAIMode() && m_game->getTurn() != humanColor())
                 {
                     setNotification("Hint: waiting for AI...");
                 }
                 else
                 {
-                    g_hintMove = GoAI::computeAIMove(*m_game, m_context->m_aiDifficulty);
+                    // Keep hint cheap: always use MEDIUM.
+                    setNotification("Hint: thinking...");
+                    g_hintMove = GoAI::computeAIMove(*m_game, AIDifficulty::MEDIUM);
                     g_hintClock.restart();
+
                     if (g_hintMove && g_hintMove->isPass)
                         setNotification("Hint: Pass");
                     else if (g_hintMove)
                         setNotification("Hint: " + toGoCoord(g_hintMove->x, g_hintMove->y, m_boardSize));
+                    else
+                        setNotification("Hint: (no move)");
                 }
             }
             if (key->scancode == sf::Keyboard::Scancode::E)
@@ -1730,24 +1803,31 @@ void MainBoard::ProcessInput()
                 }
                 else if (g_hintButtonBox.getGlobalBounds().contains(mp))
                 {
+                    // Same cooldown as keyboard (prevents spam / stutter)
+                    if (g_hintCooldown.getElapsedTime().asSeconds() < kHintCooldownSeconds)
+                        continue;
+                    g_hintCooldown.restart();
+
                     if (aiBusy())
                     {
                         setNotification("Hint: AI is thinking...");
                     }
-                    else
-                    // Hint only makes sense when human can move in AI mode
-                    if (isAIMode() && m_game->getTurn() != humanColor())
+                    else if (isAIMode() && m_game->getTurn() != humanColor())
                     {
                         setNotification("Hint: waiting for AI...");
                     }
                     else
                     {
-                        g_hintMove = GoAI::computeAIMove(*m_game, m_context->m_aiDifficulty);
+                        setNotification("Hint: thinking...");
+                        g_hintMove = GoAI::computeAIMove(*m_game, AIDifficulty::MEDIUM);
                         g_hintClock.restart();
+
                         if (g_hintMove && g_hintMove->isPass)
                             setNotification("Hint: Pass");
                         else if (g_hintMove)
                             setNotification("Hint: " + toGoCoord(g_hintMove->x, g_hintMove->y, m_boardSize));
+                        else
+                            setNotification("Hint: (no move)");
                     }
                 }
                 else

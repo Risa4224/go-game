@@ -15,7 +15,8 @@ enum AssetID
     STONEPLACE_SOUND = 1,
     PASS_SOUND = 2,
     INVALID_SOUND = 3,
-    WIN_SOUND = 4
+    WIN_SOUND = 4,
+    GAME_ICON = 5
 };
 
 // Chế độ chơi

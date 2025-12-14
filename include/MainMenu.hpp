@@ -6,7 +6,7 @@
 
 #include <SFML/Graphics/Text.hpp>
 #include <SFML/Graphics/RectangleShape.hpp>
-
+#include <SFML/Graphics/Sprite.hpp>
 class MainMenu : public Engine::State
 {
 private:
@@ -17,6 +17,8 @@ private:
     sf::RectangleShape m_playButtonBox;
     sf::RectangleShape m_settingsButtonBox;
     sf::RectangleShape m_exitButtonBox;
+    sf::RectangleShape m_titleBar;
+    sf::Sprite m_gameIcon;
 
     sf::Text m_playButtonText;
     sf::Text m_settingsButtonText;

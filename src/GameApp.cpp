@@ -1,19 +1,27 @@
 #include "GameApp.h"
 #include "MainMenu.hpp"
 #include <SFML/Window.hpp>
-
+#include <SFML/Graphics/Image.hpp>
 GameApp::GameApp()
     : m_context(std::make_shared<Context>())
 {
-
     m_context->m_window->create(
         sf::VideoMode({1000u, 800u}),
-        "Go Game",
+        "Baduk",
         sf::Style::Close);
+    sf::Image icon;
+    if (icon.loadFromFile("assets/texture/game_icon.png")) // use your transparent PNG
+    {
+        m_context->m_window->setIcon(icon);
+    }
 
     m_context->m_assets->AddFont(
         MAIN_FONT,
         "assets/fonts/Roboto-VariableFont_wdth,wght.ttf");
+    m_context->m_assets->AddTexture(
+        GAME_ICON,
+        "assets/texture/game_icon.png", // <-- put your icon file here
+        false);
     if (m_context->m_music->openFromFile("assets/audio/background.mp3"))
     {
         m_context->m_music->setVolume(100.f);
@@ -28,9 +36,9 @@ GameApp::GameApp()
         auto &assets = *m_context->m_assets;
 
         assets.AddSoundBuffer(STONEPLACE_SOUND, "assets/sfx/stone_place.mp3");
-        assets.AddSoundBuffer(PASS_SOUND,       "assets/sfx/pass.wav");
-        assets.AddSoundBuffer(INVALID_SOUND,    "assets/sfx/invalid.mp3");
-        assets.AddSoundBuffer(WIN_SOUND,        "assets/sfx/win.mp3");
+        assets.AddSoundBuffer(PASS_SOUND, "assets/sfx/pass.wav");
+        assets.AddSoundBuffer(INVALID_SOUND, "assets/sfx/invalid.mp3");
+        assets.AddSoundBuffer(WIN_SOUND, "assets/sfx/win.mp3");
     }
     m_context->m_states->Add(std::make_unique<MainMenu>(m_context), false);
 }

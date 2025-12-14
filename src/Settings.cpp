@@ -9,8 +9,8 @@
 
 namespace
 {
-constexpr float kRowHeight = 80.f;
-constexpr float kRowGap    = 100.f; // distance between row centers
+constexpr float kRowHeight = 72.f;
+constexpr float kRowGap    = 92.f; // distance between row centers
 } // namespace
 
 SettingsState::SettingsState(std::shared_ptr<Context>& context)
@@ -223,50 +223,64 @@ void SettingsState::Init()
     const float cx = static_cast<float>(winSize.x) * 0.5f;
     const float cy = static_cast<float>(winSize.y) * 0.5f;
 
+    // Responsive widths (don’t look tiny or huge on different windows)
+    const float rowW = std::clamp(winSize.x * 0.52f, 440.f, 560.f);
+
+    m_volumeBox.setSize({rowW, kRowHeight});
+    m_themeBox.setSize({rowW, kRowHeight});
+    m_stoneBox.setSize({rowW, kRowHeight});
+    m_backBox.setSize({std::min(260.f, rowW * 0.55f), 64.f});
+
     // Title
     {
         const auto b = m_titleText.getLocalBounds();
         m_titleText.setOrigin(b.getCenter());
-        m_titleText.setPosition({cx, cy - 180.f});
+        m_titleText.setPosition({cx, winSize.y * 0.18f});
     }
+
+    // Base Y for first row (under title)
+    const float startY = m_titleText.getPosition().y + 135.f;
+
+    auto styleRowBox = [](sf::RectangleShape& box)
+    {
+        box.setFillColor(sf::Color(230, 230, 230));
+        box.setOutlineThickness(2.f);
+        box.setOutlineColor(sf::Color(255, 255, 255, 140));
+    };
 
     // Volume row
     {
         const auto b = m_volumeBox.getLocalBounds();
         m_volumeBox.setOrigin(b.getCenter());
-        m_volumeBox.setPosition({cx, cy - 20.f});
-        m_volumeBox.setFillColor(sf::Color(200, 200, 200));
-        m_volumeBox.setOutlineThickness(2.f);
-        m_volumeBox.setOutlineColor(sf::Color(170, 170, 170));
+        m_volumeBox.setPosition({cx, startY});
+        styleRowBox(m_volumeBox);
 
-        // Initialize from current music volume (or old on/off flag)
         float startVol = 100.f;
         if (m_context->m_music)
             startVol = m_context->m_music->getVolume();
         else
             startVol = m_context->m_musicEnabled ? 100.f : 0.f;
 
-        ApplyVolume(startVol);
+        ApplyVolume(startVol); // also calls LayoutVolumeRow()
     }
 
     // Theme row
     {
         const auto b = m_themeBox.getLocalBounds();
         m_themeBox.setOrigin(b.getCenter());
-        m_themeBox.setPosition({cx, cy - 20.f + kRowGap});
-        m_themeBox.setFillColor(sf::Color(200, 200, 200));
+        m_themeBox.setPosition({cx, startY + 1.f * kRowGap});
+        styleRowBox(m_themeBox);
 
-        // First layout with the default string, then refresh to match current context
         LayoutThemeRow();
         RefreshThemeText();
     }
 
-    // Stone theme row
+    // Stone row
     {
         const auto b = m_stoneBox.getLocalBounds();
         m_stoneBox.setOrigin(b.getCenter());
-        m_stoneBox.setPosition({cx, cy - 20.f + 2.f * kRowGap});
-        m_stoneBox.setFillColor(sf::Color(200, 200, 200));
+        m_stoneBox.setPosition({cx, startY + 2.f * kRowGap});
+        styleRowBox(m_stoneBox);
 
         LayoutStoneRow();
         RefreshStoneText();
@@ -276,8 +290,8 @@ void SettingsState::Init()
     {
         const auto b = m_backBox.getLocalBounds();
         m_backBox.setOrigin(b.getCenter());
-        m_backBox.setPosition({cx, cy - 20.f + 3.f * kRowGap});
-        m_backBox.setFillColor(sf::Color(200, 200, 200));
+        m_backBox.setPosition({cx, startY + 3.f * kRowGap});
+        styleRowBox(m_backBox);
 
         const auto tb = m_backText.getLocalBounds();
         m_backText.setOrigin(tb.getCenter());
@@ -382,19 +396,45 @@ void SettingsState::ProcessInput()
 
 void SettingsState::Update(sf::Time)
 {
-    m_volumeBox.setFillColor(m_volumeBoxHovered ? sf::Color(230, 230, 230) : sf::Color(200, 200, 200));
-    m_themeBox.setFillColor(m_themeHovered ? sf::Color(230, 230, 230) : sf::Color(200, 200, 200));
-    m_stoneBox.setFillColor(m_stoneHovered ? sf::Color(230, 230, 230) : sf::Color(200, 200, 200));
-    m_backBox.setFillColor(m_backHovered ? sf::Color(230, 230, 230) : sf::Color(200, 200, 200));
+    const sf::Color boxNormal(230, 230, 230);
+    const sf::Color boxHover(245, 245, 245);
+    const sf::Color outlineNormal(255, 255, 255, 140);
+    const sf::Color outlineHover(255, 255, 255, 220);
 
-    m_volumeKnob.setFillColor((m_volumeHovered || m_volumeDragging) ? sf::Color(255, 255, 255) : sf::Color(245, 245, 245));
+    auto applyHover = [&](sf::RectangleShape& box, bool hovered)
+    {
+        box.setFillColor(hovered ? boxHover : boxNormal);
+        box.setOutlineColor(hovered ? outlineHover : outlineNormal);
+    };
+
+    applyHover(m_volumeBox, m_volumeBoxHovered);
+    applyHover(m_themeBox,  m_themeHovered);
+    applyHover(m_stoneBox,  m_stoneHovered);
+    applyHover(m_backBox,   m_backHovered);
+
+    // Slider knob highlight
+    m_volumeKnob.setFillColor((m_volumeHovered || m_volumeDragging)
+        ? sf::Color(255, 255, 255)
+        : sf::Color(245, 245, 245));
 }
 
 void SettingsState::Draw()
 {
+    // Small helper: draw a soft shadow behind a box
+    auto drawShadow = [&](const sf::RectangleShape& box)
+    {
+        sf::RectangleShape sh = box;
+        sh.setFillColor(sf::Color(0, 0, 0, 40)); // shadow alpha
+        sh.setOutlineThickness(0.f);
+        sh.move({0.f, 5.f}); // slight drop
+        m_context->m_window->draw(sh);
+    };
+
+    // Title
     m_context->m_window->draw(m_titleText);
 
-    // Volume row
+    // ----- Volume row -----
+    drawShadow(m_volumeBox);
     m_context->m_window->draw(m_volumeBox);
     m_context->m_window->draw(m_volumeLabel);
     m_context->m_window->draw(m_volumeTrack);
@@ -402,17 +442,20 @@ void SettingsState::Draw()
     m_context->m_window->draw(m_volumeKnob);
     m_context->m_window->draw(m_volumePercent);
 
-    // Theme row
+    // ----- Theme row -----
+    drawShadow(m_themeBox);
     m_context->m_window->draw(m_themeBox);
     m_context->m_window->draw(m_themeLabel);
     m_context->m_window->draw(m_themeValue);
 
-    // Stone theme row
+    // ----- Stone theme row -----
+    drawShadow(m_stoneBox);
     m_context->m_window->draw(m_stoneBox);
     m_context->m_window->draw(m_stoneLabel);
     m_context->m_window->draw(m_stoneValue);
 
-    // Back
+    // ----- Back -----
+    drawShadow(m_backBox);
     m_context->m_window->draw(m_backBox);
     m_context->m_window->draw(m_backText);
 }
