@@ -31,7 +31,8 @@ namespace
     constexpr float kSidePanelGap = 18.f;
 
     constexpr float kPanelTop = 30.f;
-    constexpr float kSidePanelH = 400.f; // MUST match Draw() side panel height
+    // Increased to fit two extra buttons: "Show Moves" + "Hint".
+    constexpr float kSidePanelH = 490.f; // MUST match Draw() side panel height
 
     constexpr float kBottomBarH = 30.f;
     constexpr float kHistoryMargin = 10.f;
@@ -156,6 +157,49 @@ namespace
     static sf::RectangleShape g_endGameButtonBox;
     static bool g_endGameHovered = false;
 
+    // --- Show legal moves + Hint (kept in .cpp only) ---
+    static sf::RectangleShape g_showMovesButtonBox;
+    static sf::RectangleShape g_hintButtonBox;
+    static bool g_showMovesHovered = false;
+    static bool g_hintHovered = false;
+
+    static bool g_showLegalMoves = false;
+    static bool g_legalMovesDirty = true;
+    static std::vector<sf::CircleShape> g_legalMoveMarkers;
+
+    // Hint: computed once on demand and highlighted.
+    static std::optional<AIMove> g_hintMove;
+    static sf::Clock g_hintClock;
+    static constexpr float kHintShowSeconds = 8.f;
+
+    // helper: whenever board state changes, refresh markers and clear hint
+    static void invalidateMoveVisuals()
+    {
+        g_legalMovesDirty = true;
+        g_hintMove.reset();
+    }
+
+    // ---- Legal move check for highlighting ----
+    // Your core API exposes legality through Game::placeStone(...).
+    // For highlighting, we *must not* mutate the real game state, so we
+    // clone the game and test the move on the clone.
+    static bool isLegalCandidate(const Game *game, int x, int y)
+    {
+        if (!game)
+            return false;
+
+        const Board *b = game->getBoard();
+        if (!b)
+            return false;
+
+        if (b->getPiece(x, y) != NONE)
+            return false;
+
+        // Accurate (handles suicide + ko + capture rules) without touching the real game.
+        Game snapshot(*game);
+        return snapshot.placeStone(x, y);
+    }
+
     // Move history scrolling (0 = follow latest; >0 = scrolled up)
     static int g_histScroll = 0;
 
@@ -167,7 +211,7 @@ namespace
         float y = kPanelTop + kSidePanelH + kHistoryMargin;
 
         float w = kSidePanelW;
-        float h = 250.f;
+        float h = 200.f;
         h = std::max(kHistoryMinH, h);
 
         return sf::FloatRect({x, y}, {w, h});
@@ -408,6 +452,10 @@ void MainBoard::Init()
     // End Game button on toolbar
     setupBtn(g_endGameButtonBox, 340.f);
 
+    // Show legal moves + Hint
+    setupBtn(g_showMovesButtonBox, 390.f);
+    setupBtn(g_hintButtonBox, 440.f);
+
     if (!m_game)
         m_game = std::make_unique<Game>(new Board());
 
@@ -420,6 +468,8 @@ void MainBoard::Init()
     m_moveHistory.clear();
     m_moveRedo.clear();
     g_histScroll = 0;
+
+    invalidateMoveVisuals();
 
     rebuildStonesFromGame();
     maybeRunAITurn();
@@ -631,6 +681,8 @@ void MainBoard::applyAIMove(const AIMove &mv)
             rebuildStonesFromGame();
             m_passSound.play();
         }
+
+        invalidateMoveVisuals();
         return;
     }
 
@@ -644,6 +696,8 @@ void MainBoard::applyAIMove(const AIMove &mv)
         m_placeSound.play();
         rebuildStonesFromGame();
         setNotification("AI Played " + toGoCoord(mv.x, mv.y, m_boardSize));
+
+        invalidateMoveVisuals();
     }
     else
     {
@@ -794,6 +848,8 @@ void MainBoard::handleLeftClick(const sf::Vector2i &pixelPos)
             msg += " (Ko)";
 
         setNotification(msg);
+
+        invalidateMoveVisuals();
         maybeRunAITurn();
     }
     else
@@ -834,6 +890,8 @@ void MainBoard::Update(sf::Time)
     updateColor(m_loadButtonBox, m_loadHovered);
 
     updateColor(g_endGameButtonBox, g_endGameHovered);
+    updateColor(g_showMovesButtonBox, g_showMovesHovered);
+    updateColor(g_hintButtonBox, g_hintHovered);
 
     if (m_showNotification)
     {
@@ -948,6 +1006,60 @@ void MainBoard::Draw()
     for (const auto &s : m_stones)
         window.draw(s);
 
+    // ---- Show legal moves (toggle) ----
+    if (g_showLegalMoves && m_game && m_game->getBoard())
+    {
+        if (g_legalMovesDirty)
+        {
+            g_legalMoveMarkers.clear();
+
+            const int size = m_game->getBoard()->getSize();
+            const float r = std::max(3.5f, m_cellSize * 0.12f);
+
+            for (int x = 0; x < size; ++x)
+            {
+                for (int y = 0; y < size; ++y)
+                {
+                    if (!isLegalCandidate(m_game.get(), x, y))
+                        continue;
+
+                    sf::CircleShape c(r);
+                    c.setOrigin({r, r});
+                    c.setPosition({gridStart.x + x * m_cellSize, gridStart.y + y * m_cellSize});
+                    // subtle "candidate" look
+                    c.setFillColor(sf::Color(0, 255, 120, 55));
+                    c.setOutlineThickness(1.4f);
+                    c.setOutlineColor(sf::Color(0, 255, 120, 140));
+                    g_legalMoveMarkers.push_back(c);
+                }
+            }
+
+            g_legalMovesDirty = false;
+        }
+
+        for (const auto &m : g_legalMoveMarkers)
+            window.draw(m);
+    }
+    else
+    {
+        // keep memory small when toggle is off
+        if (!g_legalMoveMarkers.empty())
+            g_legalMoveMarkers.clear();
+    }
+
+    // ---- Hint (one-shot AI suggestion highlight) ----
+    if (g_hintMove && !g_hintMove->isPass && g_hintClock.getElapsedTime().asSeconds() <= kHintShowSeconds)
+    {
+        const float r = std::max(6.0f, m_cellSize * 0.18f);
+        sf::CircleShape ring(r);
+        ring.setOrigin({r, r});
+        ring.setPosition({gridStart.x + g_hintMove->x * m_cellSize, gridStart.y + g_hintMove->y * m_cellSize});
+        ring.setFillColor(sf::Color(255, 230, 120, 25));
+        ring.setOutlineThickness(std::max(2.5f, m_cellSize * 0.06f));
+        ring.setOutlineColor(sf::Color(255, 230, 120, 225));
+        window.draw(ring);
+    }
+
     // ---- Coordinates (Top+Bottom letters, Left+Right numbers) ----
     const auto &font = m_context->m_assets->GetFont(MAIN_FONT);
 
@@ -1044,6 +1156,9 @@ void MainBoard::Draw()
     drawBtn(m_loadButtonBox, "Load");
     drawBtn(g_endGameButtonBox, "End Game");
 
+    drawBtn(g_showMovesButtonBox, g_showLegalMoves ? "Legal: ON" : "Legal: OFF");
+    drawBtn(g_hintButtonBox, "Hint");
+
     // ---- Turn Panel ----
     if (m_game)
     {
@@ -1076,7 +1191,7 @@ void MainBoard::Draw()
     bottomBar.setFillColor(sf::Color(30, 30, 30, 230));
     window.draw(bottomBar);
 
-    sf::Text hint(font, "ESC: Back | Click: Place | Z: Undo | Y: Redo | P: Pass | E: End", 16);
+    sf::Text hint(font, "ESC: Back | Click: Place | Z: Undo | Y: Redo | P: Pass | E: End | M: Moves | H: Hint", 16);
     hint.setFillColor(sf::Color::White);
     hint.setStyle(sf::Text::Bold);
     hint.setPosition({10.f, (float)winSize.y - kBottomBarH + 5.f});
@@ -1296,6 +1411,8 @@ void MainBoard::ProcessInput()
 
                     g_histScroll = 0;
 
+                    invalidateMoveVisuals();
+
                     setNotification("Loaded: " + g_saveLoad.files[g_saveLoad.selected]);
                     g_saveLoad.open = false;
 
@@ -1436,6 +1553,8 @@ void MainBoard::ProcessInput()
                         m_moveHistory.pop_back();
                     }
                     // keep scroll clamped
+
+                    invalidateMoveVisuals();
                 }
             }
             if (key->scancode == sf::Keyboard::Scancode::Y)
@@ -1448,6 +1567,8 @@ void MainBoard::ProcessInput()
                         m_moveHistory.push_back(m_moveRedo.back());
                         m_moveRedo.pop_back();
                     }
+
+                    invalidateMoveVisuals();
                 }
             }
             if (key->scancode == sf::Keyboard::Scancode::P)
@@ -1463,6 +1584,39 @@ void MainBoard::ProcessInput()
                 std::string who = (m_game->getTurn() == BLACK ? "White" : "Black");
                 m_moveHistory.push_back(who + " Pass");
                 g_histScroll = 0;
+
+                invalidateMoveVisuals();
+            }
+
+            // Toggle "Show legal moves" (requested feature)
+            // L = Legal moves, keep M as a backup shortcut.
+            if (key->scancode == sf::Keyboard::Scancode::L || key->scancode == sf::Keyboard::Scancode::M)
+            {
+                g_showLegalMoves = !g_showLegalMoves;
+                g_legalMovesDirty = true;
+                setNotification(g_showLegalMoves ? "Legal moves: ON" : "Legal moves: OFF");
+            }
+
+            if (key->scancode == sf::Keyboard::Scancode::H)
+            {
+                if (aiBusy())
+                {
+                    setNotification("Hint: AI is thinking...");
+                }
+                else
+                if (isAIMode() && m_game->getTurn() != humanColor())
+                {
+                    setNotification("Hint: waiting for AI...");
+                }
+                else
+                {
+                    g_hintMove = GoAI::computeAIMove(*m_game, m_context->m_aiDifficulty);
+                    g_hintClock.restart();
+                    if (g_hintMove && g_hintMove->isPass)
+                        setNotification("Hint: Pass");
+                    else if (g_hintMove)
+                        setNotification("Hint: " + toGoCoord(g_hintMove->x, g_hintMove->y, m_boardSize));
+                }
             }
             if (key->scancode == sf::Keyboard::Scancode::E)
             {
@@ -1500,6 +1654,8 @@ void MainBoard::ProcessInput()
             m_loadHovered = m_loadButtonBox.getGlobalBounds().contains(mp);
 
             g_endGameHovered = g_endGameButtonBox.getGlobalBounds().contains(mp);
+            g_showMovesHovered = g_showMovesButtonBox.getGlobalBounds().contains(mp);
+            g_hintHovered = g_hintButtonBox.getGlobalBounds().contains(mp);
         }
         else if (const auto *mb = event->getIf<sf::Event::MouseButtonPressed>())
         {
@@ -1517,6 +1673,8 @@ void MainBoard::ProcessInput()
                             m_moveRedo.push_back(m_moveHistory.back());
                             m_moveHistory.pop_back();
                         }
+
+                        invalidateMoveVisuals();
                     }
                 }
                 else if (m_redoButtonBox.getGlobalBounds().contains(mp))
@@ -1529,6 +1687,8 @@ void MainBoard::ProcessInput()
                             m_moveHistory.push_back(m_moveRedo.back());
                             m_moveRedo.pop_back();
                         }
+
+                        invalidateMoveVisuals();
                     }
                 }
                 else if (m_passButtonBox.getGlobalBounds().contains(mp))
@@ -1543,6 +1703,8 @@ void MainBoard::ProcessInput()
                     std::string who = (m_game->getTurn() == BLACK ? "White" : "Black");
                     m_moveHistory.push_back(who + " Pass");
                     g_histScroll = 0;
+
+                    invalidateMoveVisuals();
                 }
                 else if (m_pauseButtonBox.getGlobalBounds().contains(mp))
                 {
@@ -1559,6 +1721,34 @@ void MainBoard::ProcessInput()
                 else if (g_endGameButtonBox.getGlobalBounds().contains(mp))
                 {
                     handleGameOver();
+                }
+                else if (g_showMovesButtonBox.getGlobalBounds().contains(mp))
+                {
+                    g_showLegalMoves = !g_showLegalMoves;
+                    g_legalMovesDirty = true;
+                    setNotification(g_showLegalMoves ? "Legal moves: ON" : "Legal moves: OFF");
+                }
+                else if (g_hintButtonBox.getGlobalBounds().contains(mp))
+                {
+                    if (aiBusy())
+                    {
+                        setNotification("Hint: AI is thinking...");
+                    }
+                    else
+                    // Hint only makes sense when human can move in AI mode
+                    if (isAIMode() && m_game->getTurn() != humanColor())
+                    {
+                        setNotification("Hint: waiting for AI...");
+                    }
+                    else
+                    {
+                        g_hintMove = GoAI::computeAIMove(*m_game, m_context->m_aiDifficulty);
+                        g_hintClock.restart();
+                        if (g_hintMove && g_hintMove->isPass)
+                            setNotification("Hint: Pass");
+                        else if (g_hintMove)
+                            setNotification("Hint: " + toGoCoord(g_hintMove->x, g_hintMove->y, m_boardSize));
+                    }
                 }
                 else
                 {
@@ -1580,6 +1770,8 @@ void MainBoard::resetGame()
     m_moveHistory.clear();
     m_moveRedo.clear();
     g_histScroll = 0;
+
+    invalidateMoveVisuals();
 
     maybeRunAITurn();
 }
