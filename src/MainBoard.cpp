@@ -19,6 +19,8 @@ namespace fs = std::filesystem;
 
 namespace
 {
+    static std::mutex g_gameStateMutex;
+
     // ---- Board visual tuning (match reference style) ----
     constexpr float kGridMargin = 28.f;          // padding inside the board for coords
     constexpr float kOuterBorderThickness = 2.f; // bold outer border around grid
@@ -659,14 +661,18 @@ void MainBoard::cancelAIWorker()
 
 void MainBoard::queueAITurn(float delaySeconds)
 {
-    if (!isAIMode() || !m_game || m_game->getTurn() != aiColor())
+    if (!isAIMode() || !m_game)
         return;
 
-    // Already computing or already have a result waiting for delay -> don't queue again.
+    // Only queue when it's AI's turn.
+    if (m_game->getTurn() != aiColor())
+        return;
+
+    // Already working / already have a move ready.
     if (m_aiThinking.load() || m_aiResultReady.load())
         return;
 
-    // Ensure old thread (if any) is cleaned up.
+    // Ensure previous worker is done (should already be, but keep it safe).
     if (m_aiThread.joinable())
         m_aiThread.join();
 
@@ -676,10 +682,20 @@ void MainBoard::queueAITurn(float delaySeconds)
     m_aiThinking.store(true);
     m_aiResultReady.store(false);
 
-    // Compute AI move in background so UI can render the human move instantly.
-    m_aiThread = std::thread([this]()
+    // IMPORTANT:
+    // Snapshot the game so the AI thread never touches the live game.
+    // This prevents race/crashes if the player clicks buttons fast (undo/restart/end-game, etc.)
+    std::unique_ptr<Game> snapshot;
     {
-        AIMove mv = GoAI::computeAIMove(*m_game, m_context->m_aiDifficulty);
+        std::lock_guard<std::mutex> lk(g_gameStateMutex);
+        snapshot = std::make_unique<Game>(*m_game);
+    }
+
+    const auto diff = m_context ? m_context->m_aiDifficulty : AIDifficulty::MEDIUM;
+
+    m_aiThread = std::thread([this, snapshot = std::move(snapshot), diff]() mutable
+    {
+        AIMove mv = GoAI::computeAIMove(*snapshot, diff);
 
         {
             std::lock_guard<std::mutex> lk(m_aiMutex);

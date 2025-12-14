@@ -2,6 +2,8 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <thread>
+#include <functional>
 #include <cstdint>
 #include <cmath>
 #include <iostream>
@@ -20,11 +22,23 @@ namespace {
     // RNG dùng chung cho toàn bộ AI.
     std::mt19937& globalRng()
     {
-        static std::mt19937 rng(
-            static_cast<unsigned long>(
-                std::chrono::steady_clock::now().time_since_epoch().count()
-            )
-        );
+        // Thread-local RNG: safe when AI is called from a worker thread (VS AI)
+        // and also from the main thread (e.g., Hint).
+        thread_local std::mt19937 rng([] {
+            const auto now = static_cast<std::uint64_t>(
+                std::chrono::high_resolution_clock::now().time_since_epoch().count());
+            const auto tid = static_cast<std::uint64_t>(
+                std::hash<std::thread::id>{}(std::this_thread::get_id()));
+
+            std::seed_seq seq{
+                static_cast<std::uint32_t>(now),
+                static_cast<std::uint32_t>(now >> 32),
+                static_cast<std::uint32_t>(tid),
+                static_cast<std::uint32_t>(tid >> 32),
+            };
+            return std::mt19937(seq);
+        }());
+
         return rng;
     }
 
