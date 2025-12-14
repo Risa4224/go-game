@@ -1,4 +1,3 @@
-// board.cpp
 #include "board.h"
 #include <iostream>
 

@@ -1,4 +1,3 @@
-// game.h
 #ifndef GAME_H
 #define GAME_H
 
@@ -119,10 +118,8 @@ public:
     bool undo();
     bool redo();
 
-    // Giữ signature cũ để không vỡ UI, nhưng logic thực dùng pass>=2.
     bool ended(int /*x*/ = 0, int /*y*/ = 0) const { return consecutive_passes >= 2; }
 
-    // simple ko check helper (so sánh với trạng thái trước đó)
     bool checkKO() const;
 
 

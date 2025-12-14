@@ -1,4 +1,3 @@
-// group.h
 #ifndef GROUP_H
 #define GROUP_H
 
@@ -14,16 +13,14 @@ public:
     int getSize() const { return static_cast<int>(locations.size()); }
     int getLocation(int index) const;
 
-    // API cũ (giữ tương thích)
     bool contains(int x, int y) const;
     bool isConnected(int x, int y) const;
     void addPiece(int x, int y);
 
-    // API mới để tối ưu (Game sẽ dùng)
     void addEncodedUnchecked(int id) { locations.push_back(id); }
     void reserve(int n) { locations.reserve(n); }
 
-    PieceGroup combine(const PieceGroup& other) const; // giữ signature cũ
+    PieceGroup combine(const PieceGroup& other) const; 
     PieceColor getColor() const { return color; }
 
     const std::vector<int>& getLocations() const { return locations; }

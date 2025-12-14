@@ -29,7 +29,6 @@ void PieceGroup::addPiece(int x, int y) {
 }
 
 PieceGroup PieceGroup::combine(const PieceGroup& other) const {
-    // Hai group disjoint (theo logic Game), nên có thể append thẳng để nhanh.
     PieceGroup result = other;
     result.locations.reserve(result.locations.size() + locations.size());
     result.locations.insert(result.locations.end(), locations.begin(), locations.end());

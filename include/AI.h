@@ -3,7 +3,6 @@
 #include "nonclass.h"
 #include "game.h"
 
-// Mức độ khó của AI.
 enum class AIDifficulty {
     EASY = 0,
     MEDIUM = 1,

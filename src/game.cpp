@@ -16,7 +16,6 @@
 namespace fs = std::filesystem;
 
 namespace {
-    // stamp để tránh std::set trong calcLiberties
     struct Stamp {
         std::array<int, BOARD_CELLS> mark{};
         int token = 1;
@@ -35,9 +34,7 @@ namespace {
         }
         return true;
     }
-    // ---------------------------
     // Zobrist hashing (fast ko)
-    // ---------------------------
     static inline std::uint64_t splitmix64(std::uint64_t& x) {
         std::uint64_t z = (x += 0x9e3779b97f4a7c15ULL);
         z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ULL;
@@ -307,11 +304,9 @@ int Game::removeGroupByIndex(int groupIdx) {
         ++removed;
     }
 
-    // swap-remove để giữ O(1)
     const int last = (int)groups.size() - 1;
     if (groupIdx != last) {
         groups[groupIdx] = std::move(groups[last]);
-        // cập nhật mapping cho group bị swap vào
         for (int id : groups[groupIdx].getLocations()) {
             groupAt[id] = groupIdx;
         }
@@ -864,9 +859,7 @@ bool Game::loadFromFile(const std::string& filename) {
     std::string head;
     if (!(in >> head)) return false;
 
-    // ---------------------------
     // New compact format (V2)
-    // ---------------------------
     if (head == "GO_SAVE_V2") {
         int boardSize = 0;
         if (!(in >> boardSize) || boardSize != BOARD_SIZE) return false;
@@ -973,10 +966,8 @@ bool Game::loadFromFile(const std::string& filename) {
         return true;
     }
 
-    // ---------------------------
     // Legacy format (V1): load current board only and ignore legacy snapshot stacks.
     // This keeps the file compatible, while avoiding huge memory usage.
-    // ---------------------------
     if (!isUnsignedIntToken(head)) return false;
 
     int boardSize = 0;

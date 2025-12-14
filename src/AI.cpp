@@ -19,11 +19,8 @@ namespace {
     inline int idx(int x, int y) { return y * kBoardSize + x; }
     inline bool kinBounds(int x, int y) { return (0 <= x && x < kBoardSize && 0 <= y && y < kBoardSize); }
 
-    // RNG dùng chung cho toàn bộ AI.
     std::mt19937& globalRng()
     {
-        // Thread-local RNG: safe when AI is called from a worker thread (VS AI)
-        // and also from the main thread (e.g., Hint).
         thread_local std::mt19937 rng([] {
             const auto now = static_cast<std::uint64_t>(
                 std::chrono::high_resolution_clock::now().time_since_epoch().count());
@@ -69,12 +66,10 @@ namespace {
         void setMarked(int id, int tok) { mark[id] = tok; }
     };
 
-    thread_local StampBuf g_seenStone;   // dùng cho "visited stones" trong evaluate
-    thread_local StampBuf g_seenLib;     // dùng cho "seen liberties" theo từng group BFS
-    thread_local StampBuf g_tmpVisited;  // dùng cho BFS cục bộ trong candidate scoring
+    thread_local StampBuf g_seenStone;  
+    thread_local StampBuf g_seenLib;    
+    thread_local StampBuf g_tmpVisited;  
 
-    // BFS lấy thông tin group (stones + liberties) bắt đầu từ (sx, sy).
-    // - visitedTok: dùng chung cho toàn bộ vòng quét để tránh đếm lại group.
     GroupInfo analyzeGroupFrom(const Game& game, int sx, int sy, int visitedTok)
     {
         GroupInfo info;
@@ -142,9 +137,6 @@ namespace {
     }
 
 
-    // -------------------------------
-    // Urgent move generator (HARD)
-    // -------------------------------
     // Purpose:
     //  - Always consider forcing tactical moves first (capture/save/atari/cut/connect).
     //  - Keep the list small to avoid branching explosion.
@@ -279,7 +271,6 @@ namespace {
 
         // SAVE BY CAPTURE (counter-capture)
         // If our group is in atari, sometimes the correct defense is to capture an adjacent enemy atari group.
-        // This fixes many "AI defends wrong" situations (snapback / ko / throw-in).
         std::vector<uint8_t> usAtari(groups.size(), 0);
         for (int i = 0; i < (int)groups.size(); ++i) {
             if (groups[i].color == us && groups[i].liberties == 1 && groups[i].libCount == 1) usAtari[i] = 1;
@@ -364,16 +355,13 @@ namespace {
         return out;
     }
 
-    // Node budget để đảm bảo "reasonable time" cho Hard/Medium.
     struct SearchBudget { int remaining = 0; };
     thread_local SearchBudget g_budget;
 
 
-// ---------------------------
 // Time limit support (for MEDIUM/HARD)
 // - We stop search when reaching a per-move deadline.
 // - To keep overhead low, we check time only every N visited nodes.
-// ---------------------------
 thread_local bool g_useDeadline = false;
 thread_local bool g_abortSearch = false;
 thread_local std::chrono::steady_clock::time_point g_deadline;
@@ -416,12 +404,11 @@ static inline bool searchTimeUpNow() {
 }
 
 
-// ---------------------------
 // Move ordering heuristics (HARD)
 // - Killer moves: remember moves that caused beta cutoffs at each ply.
 // - History heuristic: reward moves that often cause cutoffs (global within this search).
 // These dramatically improve alpha-beta pruning depth without increasing branching.
-// ---------------------------
+
 constexpr int kMaxPly = 64; // safe upper bound for our shallow searches
 thread_local std::array<int, kBoardSize * kBoardSize> g_history{};
 thread_local std::array<AIMove, kMaxPly * 2> g_killer{}; // two killer moves per ply
@@ -454,9 +441,7 @@ static inline bool promoteMove(std::vector<AIMove>& moves, const AIMove& target,
 }
 
 
-    // ---------------------------
     // Territory estimate (Japanese-style): flood-fill empty regions and assign to the single bordering color.
-    // ---------------------------
     thread_local StampBuf g_seenTerr;
 
     static std::pair<int,int> estimateTerritory(const Game& game) {
@@ -554,10 +539,8 @@ static bool isNoisyForQuiescence(const Game& game) {
 
 
 
-    // ---------------------------
     // Transposition table (per computeAIMove call).
     // IMPORTANT: include ko-reference hash + turn in the key; otherwise ko positions will be mixed incorrectly.
-    // ---------------------------
     enum class TTFlag : std::uint8_t { EXACT = 0, LOWER = 1, UPPER = 2 };
 
     struct TTEntry {
@@ -574,7 +557,6 @@ static bool isNoisyForQuiescence(const Game& game) {
     }
 
     static inline std::uint64_t ttKey(const Game& g) {
-        // IMPORTANT:
         // Board position alone is not sufficient for a stable TT in this project because:
         // - captures affect the score-aligned heuristic
         // - pass state affects end conditions (two consecutive passes) while the board hash is unchanged
@@ -644,12 +626,10 @@ static bool isNoisyForQuiescence(const Game& game) {
     }
 
 
-    // ---------------------------
     // Negamax Alpha-Beta + Quiescence + PVS (internal)
     // Returns value in "color-space": (color * value_from_ai_perspective).
     // color = +1 when side-to-move == aiColor, -1 otherwise.
     // The public minimaxAlphaBetaQ() wrapper converts back to ai-space.
-    // ---------------------------
     static double negamaxAlphaBetaQ_impl(Game game,
                                         int depth,
                                         int maxDepth,
@@ -679,7 +659,7 @@ static bool isNoisyForQuiescence(const Game& game) {
         const int nextQ = qDepthLeft - (usedQ ? 1 : 0);
         const int depthRemaining = effectiveMaxDepth - depth;
 
-        // --- TT lookup (values stored in color-space) ---
+        // TT lookup (values stored in color-space)
         const std::uint64_t key = ttKey(game);
         TTEntry* tte = ttProbe(key);
         if (tte && tte->depthRemaining >= depthRemaining) {
@@ -923,7 +903,6 @@ double GoAI::evaluateBoardHeuristic(const Game& game, PieceColor aiColor)
         return (aiColor == BLACK) ? diff : -diff;
     }
 
-    // --- Tactical features (old heuristic, but down-weighted late game) ---
     PieceColor oppColor = game.oppositeColor(aiColor);
 
     g_seenStone.ensureSize(kBoardSize * kBoardSize);
@@ -964,7 +943,7 @@ double GoAI::evaluateBoardHeuristic(const Game& game, PieceColor aiColor)
         (aiLib    - oppLib)    * W_LIB +
         (oppAtariStones - aiAtariStones) * W_ATARI;
 
-    // --- Score-aligned estimate (Japanese-style): territory + captures (+ komi to White) ---
+    // Score-aligned estimate (Japanese-style): territory + captures (+ komi to White)
     const int empty = countEmpty(game);
     const double phase = 1.0 - (double)empty / (kBoardSize * kBoardSize); // 0 early -> 1 late
 
@@ -1057,9 +1036,6 @@ const PieceColor aiColor  = game.getTurn();
                 if (game.getPiece(x, y) == NONE) candMask[idx(x,y)] = 1;
     }
 
-    // ---- Global candidates (tenuki / big points) ----
-    // Ý tưởng: candidate hiện tại quá "local" (chỉ quanh nhóm đang giao tranh) -> AI hay bỏ lỡ nước lớn ở xa.
-    // Ta thêm một ít điểm trống "xa quân" dựa trên khoảng cách Manhattan tới quân gần nhất.
     std::array<int16_t, kBoardSize * kBoardSize> distToStone;
     distToStone.fill(-1);
 
@@ -1140,7 +1116,6 @@ auto buildDistColor = [&](PieceColor c, std::array<int16_t, kBoardSize * kBoardS
 if (blackSt > 0) buildDistColor(BLACK, distToBlack);
 if (whiteSt > 0) buildDistColor(WHITE, distToWhite);
 
-    // Nếu candidate set quá nhỏ/local, thêm một số điểm "global" dựa trên distToStone.
     if (candCount > 0 && candCount < 90) {
         int extraGlobal = 0;
         if (stonesNow <= 24) extraGlobal = 18;
@@ -1195,7 +1170,6 @@ if (whiteSt > 0) buildDistColor(WHITE, distToWhite);
         }
     }
 
-// ---- Boundary / influence big moves (territory boundary / contested area) ----
 // Add a small set of candidates near the "influence border" where distToBlack ~= distToWhite.
 // This helps the AI notice big, strategic moves (tenuki into the main fight boundary)
 // without exploding branching.
@@ -1250,8 +1224,6 @@ if (blackSt > 0 && whiteSt > 0) {
     }
 }
 
-    //    - liberties: để check atari
-    //    - stones: để thưởng capture theo số quân có thể bắt/cứu
     std::array<int, kBoardSize * kBoardSize> libCache;
     std::array<int, kBoardSize * kBoardSize> sizeCache;
     libCache.fill(-1);
@@ -1322,7 +1294,6 @@ if (blackSt > 0 && whiteSt > 0) {
     };
 
 
-    // ------------------------------------------------------------
     // "Don't be stupid" filters (cheap anti-blunder heuristics)
     //  1) Avoid filling our own (simple) true eye unless it's a capture / urgent save.
     //  2) Penalize obvious self-atari (new group ends with 1 liberty) unless it's a direct save.
@@ -1330,7 +1301,6 @@ if (blackSt > 0 && whiteSt > 0) {
     // Notes:
     //  - We keep these checks lightweight so Medium(1s)/Hard(3s) can still search deep.
     //  - We do NOT attempt full life&death; just filter the most common blunders.
-    // ------------------------------------------------------------
 
     auto isSimpleTrueEye = [&](int x, int y) -> bool {
         // Conservative "true-eye" test:
@@ -1422,7 +1392,7 @@ if (blackSt > 0 && whiteSt > 0) {
             }
 
             if (stonesNow <= 10) {
-                if ((x == 3 || x == 15) && (y == 3 || y == 15)) score += 6; // 4-4
+                if ((x == 3 || x == 15) && (y == 3 || y == 15)) score += 6; 
                 if ((x == 3 || x == 15) && y == 9) score += 3;
                 if ((y == 3 || y == 15) && x == 9) score += 3;
                 if (x == 9 && y == 9) score += 4;
@@ -1458,25 +1428,22 @@ if (blackSt > 0 && whiteSt > 0) {
                     adjEmpty++;
                     score += 1;
                 } else if (p == oppColor) {
-                    // nếu group địch đang ở atari và (x,y) kề nó => có khả năng là liberty cuối => bắt
                     auto [libs, stones] = groupStatsCached(nx, ny);
                     if (libs == 1) {
                         wouldCapture = true;
                         score += 30 + 3 * stones;
                     }
                 } else if (p == aiColor) {
-                    // cứu group mình ở atari
                     auto [libs, stones] = groupStatsCached(nx, ny);
                     if (libs == 1) {
                         directSave = true;
                         score += 18 + 2 * stones;
                     }
-                    // nối group
                     score += 3;
                 }
             }
 
-            // --- "Don't be stupid" filters ---
+            // "Don't be stupid" filters
             // 1) Avoid filling our own true eye (most common blunder).
             // 2) Penalize obvious self-atari (new group ends with 1 liberty) unless it's a direct save.
             if (!wouldCapture) {
@@ -1512,7 +1479,6 @@ if (blackSt > 0 && whiteSt > 0) {
     return moves;
 }
 
-// Minimax (Medium) với cắt candidate để giảm branching
 double GoAI::minimax(Game game,
                      int depth,
                      int maxDepth,
@@ -1530,7 +1496,6 @@ double GoAI::minimax(Game game,
 
     std::vector<AIMove> moves = generateCandidateMoves(game);
 
-// Beam trong search để giữ thời gian ổn định
     int limit = 40;
     if (maxDepth >= 3) limit = 28;
     if (depth >= maxDepth - 1) limit = 14;
@@ -1638,7 +1603,6 @@ AIMove GoAI::computeAIMove(const Game& game, AIDifficulty difficulty)
     }
 
     if (candidates.empty()) return AIMove(-1, -1, true);
-// EASY: random hợp lệ
     if (difficulty == AIDifficulty::EASY) {
         std::mt19937& rng = globalRng();
         std::shuffle(candidates.begin(), candidates.end(), rng);
@@ -1651,12 +1615,10 @@ AIMove GoAI::computeAIMove(const Game& game, AIDifficulty difficulty)
     }
 
 
-    // ------------------------------------------------------------
     // Root anti-blunder post-filter
     // Urgent moves bypass generateCandidateMoves() scoring filters, so we
     // re-check a few cheap patterns at the root to avoid wasting beam slots
     // on obvious self-atari / filling true eyes.
-    // ------------------------------------------------------------
     auto rootDidCapture = [&](const Game& after) -> bool {
         if (aiColor == BLACK) return after.getBlackCaptures() > baseBlackCaptures;
         return after.getWhiteCaptures() > baseWhiteCaptures;
@@ -1711,7 +1673,7 @@ AIMove GoAI::computeAIMove(const Game& game, AIDifficulty difficulty)
     };
 
 
-// Time budget per move (no UI dependency).
+// Time budget per move
 // - HARD: up to 3 seconds
 // - MEDIUM: up to 1 second
 int timeLimitMs = 0;
@@ -2146,7 +2108,7 @@ for (int d = 1; d <= maxDepth; ++d) {
     }
 }
 
-// Late-game pass decision (kept from your previous logic).
+// Late-game pass decision
 const int emptyNow = countEmpty(game);
 const bool lateGame = (emptyNow <= 60);
 
