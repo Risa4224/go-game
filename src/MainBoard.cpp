@@ -9,6 +9,7 @@
 #include <fstream>
 #include <iostream>
 #include <optional>
+#include <type_traits>
 #include <string>
 #include <vector>
 
@@ -79,6 +80,28 @@ namespace
             return {2, 4, 6};
         return {};
     }
+
+    // AI move apply delay depends on difficulty (Easy: 0s, Medium: 1.2s, Hard: 3.2s)
+    template <typename T>
+    int toIntDifficulty(T v)
+    {
+        if constexpr (std::is_enum_v<T>)
+            return static_cast<int>(v);
+        else
+            return static_cast<int>(v);
+    }
+
+    template <typename T>
+    float aiDelaySecondsForDifficulty(T diff)
+    {
+        const int d = toIntDifficulty(diff);
+        if (d <= 0)
+            return 0.f;   // Easy
+        if (d == 1)
+            return 1.2f;  // Medium
+        return 3.2f;      // Hard (and any higher)
+    }
+
 
     enum class SaveLoadMode
     {
@@ -638,7 +661,7 @@ void MainBoard::pollAITurn()
     // If it's AI's turn and nothing is queued yet, queue it (works for AI-first scenarios too).
     if (m_game->getTurn() == aiColor() && !m_aiThinking.load() && !m_aiResultReady.load())
     {
-        queueAITurn(3.f);
+        queueAITurn(aiDelaySecondsForDifficulty(m_context->m_aiDifficulty));
         return;
     }
 
@@ -666,8 +689,8 @@ void MainBoard::pollAITurn()
 void MainBoard::maybeRunAITurn()
 {
     // Old synchronous behavior caused ~3s freeze.
-    // Now we queue AI in background and apply after a delay in Update().
-    queueAITurn(3.f);
+    // Now we queue AI in background and apply after a difficulty-based delay in Update().
+    queueAITurn(aiDelaySecondsForDifficulty(m_context->m_aiDifficulty));
 }
 
 
