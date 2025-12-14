@@ -918,6 +918,19 @@ void MainBoard::handleLeftClick(const sf::Vector2i &pixelPos)
 
 void MainBoard::Update(sf::Time)
 {
+    // Keep SFX volume/toggle applied to all in-game sound effects.
+    if (m_context)
+    {
+        const float v = (m_context->m_sfxEnabled)
+            ? std::clamp(m_context->m_sfxVolume, 0.f, 100.f)
+            : 0.f;
+
+        m_placeSound.setVolume(v);
+        m_passSound.setVolume(v);
+        m_invalidSound.setVolume(v);
+        m_winSound.setVolume(v);
+    }
+
     if (m_context && m_context->m_stoneTheme != m_lastStoneTheme)
     {
         m_lastStoneTheme = m_context->m_stoneTheme;

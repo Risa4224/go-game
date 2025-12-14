@@ -2,6 +2,57 @@
 #include "MainMenu.hpp"
 #include <SFML/Window.hpp>
 #include <SFML/Graphics/Image.hpp>
+#include <algorithm>
+#include <string>
+
+namespace
+{
+static std::string MusicFileForTrack(MusicTrack t)
+{
+    switch (t)
+    {
+        case MusicTrack::Classic: return "assets/audio/background.mp3";
+        case MusicTrack::Ambient: return "assets/audio/background_2.mp3";
+        case MusicTrack::Retro:   return "assets/audio/background_2.mp3"; // legacy -> Modern
+        case MusicTrack::Off:     return "";
+        default:                  return "assets/audio/background.mp3";
+    }
+}
+
+static void ApplyMusicSettings(Context& ctx)
+{
+    if (!ctx.m_music)
+        return;
+
+    const float vol = std::clamp(ctx.m_musicVolume, 0.f, 100.f);
+
+    if (!ctx.m_musicEnabled || ctx.m_musicTrack == MusicTrack::Off || vol <= 0.f)
+    {
+        ctx.m_music->stop();
+        return;
+    }
+
+    const std::string file = MusicFileForTrack(ctx.m_musicTrack);
+    if (file.empty())
+    {
+        ctx.m_musicEnabled = false;
+        ctx.m_music->stop();
+        return;
+    }
+
+    if (!ctx.m_music->openFromFile(file))
+    {
+        ctx.m_musicEnabled = false;
+        ctx.m_music->stop();
+        return;
+    }
+
+    ctx.m_music->setLooping(true); // SFML 3
+    ctx.m_music->setVolume(vol);
+    ctx.m_music->play();
+}
+} // namespace
+
 GameApp::GameApp()
     : m_context(std::make_shared<Context>())
 {
@@ -22,17 +73,14 @@ GameApp::GameApp()
         GAME_ICON,
         "assets/texture/game_icon.png", // <-- put your icon file here
         false);
-    if (m_context->m_music->openFromFile("assets/audio/background.mp3"))
-    {
-        m_context->m_music->setVolume(100.f);
-        m_context->m_music->play();
-        m_context->m_musicEnabled = true;
-    }
-    else
-    {
-        m_context->m_musicEnabled = false;
-    }
-    {
+// Background Music (single source of truth)
+// Defaults (user can change these in Settings)
+m_context->m_musicTrack   = MusicTrack::Classic;
+m_context->m_musicVolume  = 100.f;
+m_context->m_musicEnabled = true;
+
+ApplyMusicSettings(*m_context);
+{
         auto &assets = *m_context->m_assets;
 
         assets.AddSoundBuffer(STONEPLACE_SOUND, "assets/sfx/stone_place.mp3");

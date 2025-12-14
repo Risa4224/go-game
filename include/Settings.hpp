@@ -16,19 +16,47 @@ private:
 
     sf::Text m_titleText;
 
-    // Volume row (slider)
-    sf::RectangleShape m_volumeBox;
-    sf::Text           m_volumeLabel;
-    sf::Text           m_volumePercent;
+    // --- Music (required) ---
+    // Music volume (slider)
+    sf::RectangleShape m_musicVolBox;
+    sf::Text           m_musicVolLabel;
+    sf::Text           m_musicVolPercent;
 
-    float m_volume = 100.f;
-    bool  m_volumeBoxHovered = false;
-    bool  m_volumeHovered = false;
-    bool  m_volumeDragging = false;
+    float m_musicVol = 100.f;
+    bool  m_musicVolBoxHovered = false;
+    bool  m_musicVolHovered = false;
+    bool  m_musicVolDragging = false;
 
-    sf::RectangleShape m_volumeTrack;
-    sf::RectangleShape m_volumeFill;
-    sf::CircleShape    m_volumeKnob;
+    sf::RectangleShape m_musicVolTrack;
+    sf::RectangleShape m_musicVolFill;
+    sf::CircleShape    m_musicVolKnob;
+
+    // Music track selection (click to cycle)
+    sf::RectangleShape m_musicTrackBox;
+    sf::Text           m_musicTrackLabel;
+    sf::Text           m_musicTrackValue;
+    bool               m_musicTrackHovered = false;
+
+    // --- SFX (required) ---
+    // SFX enable/disable (explicit toggle)
+    sf::RectangleShape m_sfxToggleBox;
+    sf::Text           m_sfxToggleLabel;
+    sf::Text           m_sfxToggleValue;
+    bool               m_sfxToggleHovered = false;
+
+    // SFX volume (slider)
+    sf::RectangleShape m_sfxVolBox;
+    sf::Text           m_sfxVolLabel;
+    sf::Text           m_sfxVolPercent;
+
+    float m_sfxVol = 100.f;
+    bool  m_sfxVolBoxHovered = false;
+    bool  m_sfxVolHovered = false;
+    bool  m_sfxVolDragging = false;
+
+    sf::RectangleShape m_sfxVolTrack;
+    sf::RectangleShape m_sfxVolFill;
+    sf::CircleShape    m_sfxVolKnob;
 
     // Theme row
     sf::RectangleShape m_themeBox;
@@ -48,9 +76,23 @@ private:
     bool               m_backHovered = false;
 
 private:
-    float VolumeFromMouseX(float mouseX) const;
-    void  ApplyVolume(float volumePercent);
-    void  LayoutVolumeRow();
+    float VolumeFromMouseX(float mouseX, const sf::RectangleShape& track) const;
+
+    // Music
+    void  ApplyMusicVolume(float volumePercent);
+    void  LayoutMusicVolumeRow();
+
+    void  LayoutMusicTrackRow();
+    void  RefreshMusicTrackText();
+    void  CycleMusicTrack();
+
+    // SFX
+    void  LayoutSfxToggleRow();
+    void  RefreshSfxToggleText();
+    void  ToggleSfxEnabled();
+
+    void  ApplySfxVolume(float volumePercent);
+    void  LayoutSfxVolumeRow();
 
     void  LayoutThemeRow();
     void  RefreshThemeText();
