@@ -40,7 +40,7 @@ private:
     sf::RectangleShape m_undoButtonBox;
     sf::RectangleShape m_redoButtonBox;
     sf::RectangleShape m_passButtonBox;
-    sf::RectangleShape m_pauseButtonBox;
+    sf::RectangleShape m_restartButtonBox;
     sf::RectangleShape m_saveButtonBox;
     sf::RectangleShape m_loadButtonBox;
     
@@ -48,7 +48,7 @@ private:
     bool m_undoHovered;
     bool m_redoHovered;
     bool m_passHovered;
-    bool m_pauseHovered;
+    bool m_restartHovered;
     bool m_saveHovered;
     bool m_loadHovered;
 
@@ -90,6 +90,8 @@ private:
     std::optional<sf::Text> m_fileListText;
 
     std::unique_ptr<Game> m_game;
+
+    bool m_gameOver = false;
 
     // --- Async AI move (prevents UI freeze) ---
     std::thread m_aiThread;

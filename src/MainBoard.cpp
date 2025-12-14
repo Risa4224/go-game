@@ -14,8 +14,7 @@
 #include <vector>
 
 #include "AI.h"
-#include "PauseState.hpp"
-
+#include "EndGameState.hpp"
 namespace fs = std::filesystem;
 
 namespace
@@ -392,8 +391,8 @@ MainBoard::MainBoard(std::shared_ptr<Context> &context)
       m_cellSize(0.f),
       m_boardTopLeft(0.f, 0.f),
       m_stones(),
-      m_undoButtonBox(), m_redoButtonBox(), m_passButtonBox(), m_pauseButtonBox(), m_saveButtonBox(), m_loadButtonBox(),
-      m_undoHovered(false), m_redoHovered(false), m_passHovered(false), m_pauseHovered(false), m_saveHovered(false), m_loadHovered(false),
+      m_undoButtonBox(), m_redoButtonBox(), m_passButtonBox(), m_restartButtonBox(), m_saveButtonBox(), m_loadButtonBox(),
+      m_undoHovered(false), m_redoHovered(false), m_passHovered(false), m_restartHovered(false), m_saveHovered(false), m_loadHovered(false),
       m_game(std::make_unique<Game>(new Board())),
       m_placeSound(m_context->m_assets->GetSoundBuffer(STONEPLACE_SOUND)),
       m_passSound(m_context->m_assets->GetSoundBuffer(PASS_SOUND)),
@@ -406,6 +405,8 @@ MainBoard::MainBoard(std::shared_ptr<Context> &context)
 void MainBoard::Init()
 {
     cancelAIWorker();
+
+    m_gameOver = false;
 
     std::cout << "[MainBoard] Init START\n";
 
@@ -463,7 +464,7 @@ void MainBoard::Init()
     setupBtn(m_undoButtonBox);
     setupBtn(m_redoButtonBox);
     setupBtn(m_passButtonBox);
-    setupBtn(m_pauseButtonBox);
+    setupBtn(m_restartButtonBox);
     setupBtn(m_saveButtonBox);
     setupBtn(m_loadButtonBox);
 
@@ -612,15 +613,26 @@ void MainBoard::handleGameOver()
     if (!m_game)
         return;
 
-    auto [b, w] = m_game->calculateFinalScore();
-    std::string msg = (b > w) ? "Black wins!" : (w > b) ? "White wins!"
-                                                        : "Draw!";
-    msg += " B:" + std::to_string(b) + " W:" + std::to_string(w);
+    // Prevent stacking multiple end-game modals.
+    if (m_gameOver)
+        return;
 
+    // Stop any pending AI work so the UI doesn't apply extra moves after game end.
+    cancelAIWorker();
+
+    auto [b, w] = m_game->calculateFinalScore();
+    std::string winnerLine = (b > w) ? "Black wins!" : (w > b) ? "White wins!" : "Draw!";
+    std::string msg = winnerLine + " B:" + std::to_string(b) + " W:" + std::to_string(w);
+
+    m_gameOver = true;
     setNotification(msg);
     m_winSound.play();
-    m_context->m_states->Add(std::make_unique<PauseState>(m_context, PauseState::Mode::GameOver, msg), false);
+
+    // Show modal state with winner + final score.
+    if (m_context && m_context->m_states)
+        m_context->m_states->Add(std::make_unique<EndGameState>(m_context, msg), false);
 }
+
 
 MainBoard::~MainBoard()
 {
@@ -826,6 +838,12 @@ void MainBoard::rebuildStonesFromGame()
 
 void MainBoard::handleLeftClick(const sf::Vector2i &pixelPos)
 {
+    if (m_gameOver)
+    {
+        setNotification("Game over. Press Restart.");
+        return;
+    }
+
     sf::Vector2f posF((float)pixelPos.x, (float)pixelPos.y);
     if (!m_boardBackground.getGlobalBounds().contains(posF))
         return;
@@ -920,7 +938,7 @@ void MainBoard::Update(sf::Time)
     setButtonColor(m_undoButtonBox, m_undoHovered);
     setButtonColor(m_redoButtonBox, m_redoHovered);
     setButtonColor(m_passButtonBox, m_passHovered);
-    setButtonColor(m_pauseButtonBox, m_pauseHovered);
+    setButtonColor(m_restartButtonBox, m_restartHovered);
     setButtonColor(m_saveButtonBox, m_saveHovered);
     setButtonColor(m_loadButtonBox, m_loadHovered);
 
@@ -1209,7 +1227,7 @@ void MainBoard::Draw()
     drawBtn(m_undoButtonBox, "Undo");
     drawBtn(m_redoButtonBox, "Redo");
     drawBtn(m_passButtonBox, "Pass");
-    drawBtn(m_pauseButtonBox, "Pause");
+    drawBtn(m_restartButtonBox, "Restart");
     drawBtn(m_saveButtonBox, "Save");
     drawBtn(m_loadButtonBox, "Load");
     drawBtn(g_endGameButtonBox, "End Game");
@@ -1253,7 +1271,7 @@ void MainBoard::Draw()
     bottomBar.setFillColor(sf::Color(30, 30, 30, 230));
     window.draw(bottomBar);
 
-    sf::Text hint(font, "ESC: Back | Click: Place | Z: Undo | Y: Redo | P: Pass | E: End | M: Moves | H: Hint", 16);
+    sf::Text hint(font, "ESC: Back | Click: Place | Z: Undo | Y: Redo | P: Pass | R: Restart | E: End | M/L: Legal | H: Hint", 16);
     hint.setFillColor(sf::Color::White);
     hint.setStyle(sf::Text::Bold);
     hint.setPosition({10.f, (float)winSize.y - kBottomBarH + 5.f});
@@ -1462,7 +1480,9 @@ void MainBoard::ProcessInput()
                 if (m_game->loadNamed(g_saveLoad.files[g_saveLoad.selected]))
                 {
                     rebuildStonesFromGame();
-                    m_moveRedo.clear();
+                    
+                    m_gameOver = false;
+m_moveRedo.clear();
 
                     // Load history from sidecar .hist
                     if (!readHistoryFile(g_saveLoad.files[g_saveLoad.selected], m_moveHistory))
@@ -1635,6 +1655,8 @@ void MainBoard::ProcessInput()
             }
             if (key->scancode == sf::Keyboard::Scancode::P)
             {
+                if (m_gameOver) { setNotification("Game over. Press Restart."); continue; }
+
                 m_passSound.play();
                 if (m_game->pass())
                     handleGameOver();
@@ -1650,7 +1672,13 @@ void MainBoard::ProcessInput()
                 invalidateMoveVisuals();
             }
 
-            // Toggle "Show legal moves" (requested feature)
+            
+            if (key->scancode == sf::Keyboard::Scancode::R)
+            {
+                resetGame();
+                setNotification("Restarted");
+            }
+// Toggle "Show legal moves" (requested feature)
             // L = Legal moves, keep M as a backup shortcut.
             if (key->scancode == sf::Keyboard::Scancode::L || key->scancode == sf::Keyboard::Scancode::M)
             {
@@ -1722,7 +1750,7 @@ void MainBoard::ProcessInput()
             m_undoHovered = m_undoButtonBox.getGlobalBounds().contains(mp);
             m_redoHovered = m_redoButtonBox.getGlobalBounds().contains(mp);
             m_passHovered = m_passButtonBox.getGlobalBounds().contains(mp);
-            m_pauseHovered = m_pauseButtonBox.getGlobalBounds().contains(mp);
+            m_restartHovered = m_restartButtonBox.getGlobalBounds().contains(mp);
             m_saveHovered = m_saveButtonBox.getGlobalBounds().contains(mp);
             m_loadHovered = m_loadButtonBox.getGlobalBounds().contains(mp);
 
@@ -1766,6 +1794,8 @@ void MainBoard::ProcessInput()
                 }
                 else if (m_passButtonBox.getGlobalBounds().contains(mp))
                 {
+                    if (m_gameOver) { setNotification("Game over. Press Restart."); continue; }
+
                     m_passSound.play();
                     if (m_game->pass())
                         handleGameOver();
@@ -1779,9 +1809,10 @@ void MainBoard::ProcessInput()
 
                     invalidateMoveVisuals();
                 }
-                else if (m_pauseButtonBox.getGlobalBounds().contains(mp))
+                else if (m_restartButtonBox.getGlobalBounds().contains(mp))
                 {
-                    m_context->m_states->Add(std::make_unique<PauseState>(m_context, PauseState::Mode::Paused), false);
+                    resetGame();
+                    setNotification("Restarted");
                 }
                 else if (m_saveButtonBox.getGlobalBounds().contains(mp))
                 {
@@ -1842,6 +1873,8 @@ void MainBoard::ProcessInput()
 void MainBoard::resetGame()
 {
     cancelAIWorker();
+
+    m_gameOver = false;
 
     m_game = std::make_unique<Game>(new Board());
     m_stones.clear();
